@@ -12,7 +12,17 @@ const supabase = createClient(
 async function listServices() {
   const { data, error } = await supabase
     .from("services")
-    .select("service_id, name_en, price_jd")
+    .select(
+      `
+  service_id,
+  name_en,
+  name_ar,
+  category,
+  duration_min,
+  price_jd,
+  staff_level
+`
+    )
     .eq("is_active", true)
     .order("name_en");
   if (error) throw error;
