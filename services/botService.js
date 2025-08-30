@@ -18,6 +18,17 @@ const {
   cleanArabicForDate,
 } = require("../utils/time");
 const { talkToGPT } = require("../utils/gptUtils");
+const {
+  transliterateArabicNameToEnglish,
+  hasArabic,
+  hasLatin,
+  looksLikeName,
+} = require("../utils/nameTransliteration");
+const {
+  getCustomerByPhone,
+  upsertCustomer,
+  getLastBookingName,
+} = require("./customerServices");
 
 // 0 = unlimited (disabled). Set MAX_CONCURRENT in .env to enable
 const MAX_CONCURRENT = Number(process.env.MAX_CONCURRENT || "0");
@@ -122,6 +133,125 @@ function joinServiceNames(services = [], lang = "en") {
  */
 function toArabicDigits(str) {
   return str.replace(/\d/g, (d) => "٠١٢٣٤٥٦٧٨٩"[d]);
+}
+function sendReply(res, msg) {
+  const twiml = new twilio.twiml.MessagingResponse();
+  twiml.message(msg);
+  return res.type("text/xml").send(twiml.toString());
+}
+
+async function postNameResumeAfterFirstReply({
+  originalMsg,
+  fromPhone,
+  userLang,
+  displayName,
+  res,
+}) {
+  // Thank them BY NAME in their language
+  let thanks = BOT_MESSAGES.thanksNamePersonal[userLang](displayName);
+  if (userLang === "ar") thanks = toArabicDigits(thanks);
+
+  // If first message was a booking intent, try to auto-complete
+  if (isBookIntent(originalMsg)) {
+    const svcs = await listServices();
+    const picked = findServiceByText(originalMsg, svcs, userLang);
+
+    let cleaned = originalMsg;
+    if (userLang === "ar") cleaned = cleanArabicForDate(originalMsg);
+    const startISO =
+      extractArabicDate(cleaned) ||
+      parseJordanDateTime(cleaned, null, userLang);
+
+    // A) Full booking in first message → confirm now
+    if (picked && startISO) {
+      const durationMin = picked.duration_min || 45;
+
+      // Business-hours guard
+      const winTxt = formatWindowForReply(startISO, userLang);
+      const within = isWithinBusinessHours(startISO, durationMin);
+      const { closed } = getBusinessWindowFor(startISO);
+
+      if (closed) {
+        let msg =
+          `${thanks}\n\n` +
+          BOT_MESSAGES.closedThatDay[userLang](dayLabel(startISO, userLang));
+        if (userLang === "ar") msg = toArabicDigits(msg);
+        return sendReply(res, msg);
+      }
+      if (!within) {
+        let msg =
+          `${thanks}\n\n` +
+          BOT_MESSAGES.outsideBusinessHours[userLang](winTxt || "-");
+        if (userLang === "ar") msg = toArabicDigits(msg);
+        return sendReply(res, msg);
+      }
+
+      // Capacity guard
+      const okCap = await guardMaxConcurrent(startISO, durationMin, userLang, res);
+      if (!okCap) return;
+
+      // Create booking
+      const id = await makeBooking({
+        phone: fromPhone,
+        names: [picked.name_en], // EN for DB
+        startISO,
+        customerName: (await getCustomerByPhone(fromPhone))?.name || null,
+      });
+
+      // Confirmation text
+      const svcTxt =
+        userLang === "ar"
+          ? picked.name_ar || picked.name_en
+          : picked.name_en || picked.name_ar;
+      const whenTxt = formatWhatsAppDate(startISO, userLang);
+
+      let confirm =
+        userLang === "ar"
+          ? `✅ تم الحجز لـ ${svcTxt} – ${whenTxt}. رقمك: BR-${String(id).slice(0,6)}.`
+          : `✅ Booked for ${svcTxt} – ${whenTxt}. Your ID: BR-${String(id).slice(0,6)}.`;
+
+      if (userLang === "ar") confirm = toArabicDigits(confirm);
+      return sendReply(res, `${thanks}\n\n${confirm}`);
+    }
+
+    // B1) They mentioned a service but no time → set stage=when and ask for time
+    if (picked && !startISO) {
+      cache.set(`${fromPhone}-mode`, "book");
+      cache.set(`${fromPhone}-book-stage`, "when");
+      cache.set(`${fromPhone}-svclist`, svcs);
+      cache.set(`${fromPhone}-book-svc`, picked);
+
+      const svcTxt =
+        userLang === "ar"
+          ? picked.name_ar || picked.name_en
+          : picked.name_en || picked.name_ar;
+
+      let msg = `${thanks}\n\n` + BOT_MESSAGES.bookingAskWhen[userLang](svcTxt);
+      if (userLang === "ar") msg = toArabicDigits(msg);
+      return sendReply(res, msg);
+    }
+
+    // B2) No service parsed yet → set stage=service and list services
+    cache.set(`${fromPhone}-mode`, "book");
+    cache.set(`${fromPhone}-book-stage`, "service");
+    cache.set(`${fromPhone}-svclist`, svcs);
+
+    const body = renderServicesList(svcs, userLang);
+    let msg = `${thanks}\n\n` + BOT_MESSAGES.servicesHeader[userLang](body);
+    if (userLang === "ar") msg = toArabicDigits(msg);
+    return sendReply(res, msg);
+  }
+
+  // Not a booking intent → still start the booking flow with services
+  const svcs = await listServices();
+  cache.set(`${fromPhone}-mode`, "book");
+  cache.set(`${fromPhone}-book-stage`, "service");
+  cache.set(`${fromPhone}-svclist`, svcs);
+
+  const body = renderServicesList(svcs, userLang);
+  let msg = `${thanks}\n\n` + BOT_MESSAGES.servicesHeader[userLang](body);
+  if (userLang === "ar") msg = toArabicDigits(msg);
+  return sendReply(res, msg);
 }
 
 function getBusinessWindowFor(startISO) {
@@ -246,7 +376,7 @@ async function findNearestAvailableSlots(
 
   // Try exactly -30 and +30 first
   beforeISO = await check(center.minus({ minutes: stepMin }));
-  afterISO  = await check(center.plus({ minutes: stepMin }));
+  afterISO = await check(center.plus({ minutes: stepMin }));
 
   // If one (or both) is still missing, keep stepping outward independently
   for (let hop = 2; hop <= maxHops && (!beforeISO || !afterISO); hop++) {
@@ -321,7 +451,7 @@ async function guardMaxConcurrent(
 
     const suggestions = [];
     if (beforeISO) suggestions.push(`• ${fmtTime(beforeISO)}`);
-    if (afterISO)  suggestions.push(`• ${fmtTime(afterISO)}`);
+    if (afterISO) suggestions.push(`• ${fmtTime(afterISO)}`);
 
     if (suggestions.length > 0) {
       msg += `\n\n${BOT_MESSAGES.suggestIntro[userLang]}\n${suggestions.join(
@@ -337,7 +467,6 @@ async function guardMaxConcurrent(
   }
   return true;
 }
-
 
 // ---- Booking intent + helpers ----
 
@@ -529,6 +658,14 @@ const BOT_MESSAGES = {
     ar: (svcNames, when) =>
       `لقيت حجز واحد: ${svcNames} يوم ${when}. بدك تلغيه؟ (نعم / لا)`,
   },
+  askName: {
+    en: "Hi! I don’t have your name yet — what should I call you?",
+    ar: "مرحباً! لسه ما عندي اسمك — شو اسمك الكريم؟",
+  },
+  thanksNamePersonal: {
+    en: (n) => `Thanks, ${n}! Your name is saved.`,
+    ar: (n) => `شكراً يا ${n}! تم حفظ الاسم.`,
+  },
   whichBookingToUpdate: {
     en: (listTxt) =>
       `Which booking do you want to update? Reply with a number:\n${listTxt}`,
@@ -626,12 +763,112 @@ async function handleIncomingMessage(req, res) {
     if (!ok) return res.status(403).send("Invalid signature");
   }
 
-  const incomingMsg = (req.body.Body || "").trim();
+  let incomingMsg = (req.body.Body || "").trim();
+
   const fromPhone = (req.body.From || "").replace("whatsapp:", "");
 
   const prevLang = cache.get(`${fromPhone}-lang`) || "en";
   const userLang = guessLang(incomingMsg, prevLang);
   cache.set(`${fromPhone}-lang`, userLang);
+
+  // === CUSTOMER NAME CAPTURE (first-time only) ===
+  const awaitingKey = `${fromPhone}-awaitingName`;
+  const resumeKey = `${fromPhone}-resumeMsg`;
+
+  // 1) Do we already know this customer?
+  let customerRow = null;
+  try {
+    customerRow = await getCustomerByPhone(fromPhone);
+  } catch {}
+  if (!customerRow) {
+    // Optional: prefill from the latest booking snapshot if any (legacy users)
+    try {
+      const last = await getLastBookingName(fromPhone);
+      if (last) {
+        customerRow = await upsertCustomer({
+          phone: fromPhone,
+          name: last, // assumed EN snapshot
+          preferred_language: userLang === "ar" ? "ar" : "en",
+        });
+      }
+    } catch {}
+  }
+
+  // 2) If still unknown and not already asking → ask once and stash the original message
+  if (!customerRow && !cache.get(awaitingKey)) {
+    cache.set(awaitingKey, true);
+    cache.set(resumeKey, incomingMsg);
+
+    let ask = BOT_MESSAGES.askName[userLang];
+    if (userLang === "ar") ask = toArabicDigits(ask);
+    return sendReply(res, ask);
+  }
+
+  // 3) We are waiting for the user's name now
+  if (!customerRow && cache.get(awaitingKey)) {
+    const nameText = incomingMsg.trim();
+
+    if (!looksLikeName(nameText)) {
+      const again =
+        userLang === "ar"
+          ? "الاسم مش واضح. اكتب اسمك الأول والأخير لو سمحت."
+          : "That doesn’t look like a name. Please send your first and last name.";
+      return sendReply(res, userLang === "ar" ? toArabicDigits(again) : again);
+    }
+
+    // Derive canonical English + keep Arabic if provided
+    let canonicalEn = null;
+    let nameArToSave = null;
+
+    if (
+      process.env.AUTO_TRANSLITERATE_NAMES === "1" &&
+      hasArabic(nameText) &&
+      !hasLatin(nameText)
+    ) {
+      const result = await transliterateArabicNameToEnglish(nameText);
+      console.log("[NAME_TRANSLIT]", {
+        phone: fromPhone,
+        input: nameText,
+        output: result?.nameEn,
+        conf: result?.confidence,
+      });
+      if (result?.nameEn && result.confidence >= 0.75) {
+        canonicalEn = result.nameEn; // EN for UI & bookings
+        nameArToSave = nameText; // preserve Arabic original
+      }
+    }
+
+    // If not Arabic-only or transliteration failed → use what they sent
+    if (!canonicalEn) {
+      canonicalEn = nameText; // may already be EN/mixed
+      if (hasArabic(nameText)) nameArToSave = nameText;
+    }
+
+    // Save customer
+    await upsertCustomer({
+      phone: fromPhone,
+      name: canonicalEn, // EN canonical
+      preferred_language: userLang === "ar" ? "ar" : "en",
+      name_ar: nameArToSave,
+    });
+
+    // THANK THEM BY NAME using the SAME ANSWERED LANGUAGE:
+    // If they typed Arabic → display the Arabic they typed; else use English.
+    const displayName = hasArabic(nameText) ? nameText : canonicalEn;
+
+    // Resume using the original message that triggered the name ask
+    const original = cache.get(resumeKey) || "";
+    cache.delete(awaitingKey);
+    cache.delete(resumeKey);
+
+    return postNameResumeAfterFirstReply({
+      originalMsg: original,
+      fromPhone,
+      userLang,
+      displayName,
+      res,
+    });
+  }
 
   if (
     /\b(list|show)\s+(?:the\s+)?services?\b/i.test(incomingMsg) ||
@@ -707,6 +944,7 @@ async function handleIncomingMessage(req, res) {
           phone: fromPhone,
           names: [picked.name_en],
           startISO,
+          customerName: customerRow?.name || null,
         });
 
         ["mode", "book-stage", "book-svc", "svclist"].forEach((k) =>
@@ -1164,6 +1402,7 @@ async function handleIncomingMessage(req, res) {
       phone: fromPhone,
       names: [svc.name_en],
       startISO,
+      customerName: customerRow?.name || null,
     });
 
     ["mode", "book-stage", "book-svc", "svclist"].forEach((k) =>
@@ -1309,6 +1548,7 @@ ${menuText}
         phone: fromPhone,
         names: args.service_names,
         startISO,
+        customerName: customerRow?.name || null,
       });
       const twiml = new twilio.twiml.MessagingResponse();
       twiml.message(BOT_MESSAGES.bookedId[userLang](String(id).slice(0, 6)));

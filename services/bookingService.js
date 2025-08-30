@@ -3,6 +3,7 @@
 const { createClient } = require("@supabase/supabase-js");
 const { DateTime } = require("luxon");
 const {getJordanDayUtcRange} =require('../utils/time')
+const { getCustomerByPhone } = require("./customerServices");
 
 // Setup Supabase client
 const supabase = createClient(
@@ -14,9 +15,18 @@ const TIME_ZONE = "Asia/Amman";
 
 // Insert a new booking and associated services
 async function makeBooking({ phone, names, startISO }) {
+  // snapshot English name from customers (if exists)
+  let snapshotName = null;
+  try { const c = await getCustomerByPhone(phone); snapshotName = c?.name || null; } catch {}
+
   const { data, error } = await supabase
     .from("bookings")
-    .insert({ customer_phone: phone, start_at: startISO, status: "confirmed" })
+    .insert({
+      customer_phone: phone,
+      customer_name: snapshotName, // English snapshot
+      start_at: startISO,
+      status: "confirmed",
+    })
     .select("id")
     .single();
   if (error) throw error;
@@ -29,6 +39,7 @@ async function makeBooking({ phone, names, startISO }) {
 
   return data.id;
 }
+
 
 // Get all upcoming bookings for a phone number
 async function upcomingBookings(phone) {
@@ -159,19 +170,16 @@ async function updateBooking({
   return updatedBooking;
 }
 
-async function makeBookingByServiceIds({
-  startISO,
-  serviceIds,
-  phone,
-  name,
-  notes,
-}) {
+async function makeBookingByServiceIds({ startISO, serviceIds, phone, name, notes }) {
+  let snapshotName = null;
+  try { const c = await getCustomerByPhone(phone); snapshotName = c?.name || null; } catch {}
+
   const { data: inserted, error } = await supabase
     .from("bookings")
     .insert({
       start_at: startISO,
       customer_phone: phone,
-      customer_name: name,
+      customer_name: snapshotName,  // English snapshot
       notes,
       status: "confirmed",
     })
@@ -179,18 +187,15 @@ async function makeBookingByServiceIds({
     .single();
   if (error) throw error;
 
-  // Use your new Supabase function for service_ids!
-  const { error: bsErr } = await supabase.rpc(
-    "insert_booking_services_by_ids",
-    {
-      _booking_id: inserted.id,
-      _service_ids: serviceIds,
-    }
-  );
+  const { error: bsErr } = await supabase.rpc("insert_booking_services_by_ids", {
+    _booking_id: inserted.id,
+    _service_ids: serviceIds,
+  });
   if (bsErr) throw bsErr;
 
   return inserted;
 }
+
 
 async function getTodaysBookings() {
   // 1. Get Jordan time "today" as ISO string (e.g. '2025-07-15')
