@@ -128,6 +128,62 @@ function joinServiceNames(services = [], lang = "en") {
     .join(", ");
 }
 
+// Fallback month-word parser for phrases like "10 September 6 pm" or "10th of September at 6 pm"
+function parseMonthWordFallback(text, existingISO = null) {
+  const jordanZone = TIME_ZONE;
+  const now = DateTime.now().setZone(jordanZone);
+  const existingDt = existingISO ? DateTime.fromISO(existingISO, { zone: jordanZone }) : null;
+
+  let cleaned = String(text || "")
+    .toLowerCase()
+    .replace(/(\d)(am|pm)\b/gi, "$1 $2")
+    .replace(/\b(\d{1,2})(st|nd|rd|th)\b/gi, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const m = cleaned.match(/(\d{1,2})\s+(?:of\s+)?([a-z]+)(?:\s+(\d{4}))?(?:\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?/i);
+  if (!m) return null;
+
+  const day = parseInt(m[1], 10);
+  const rawMonth = (m[2] || "").toLowerCase();
+  const EN_MONTH = {
+    jan: 1, january: 1,
+    feb: 2, february: 2,
+    mar: 3, march: 3,
+    apr: 4, april: 4,
+    may: 5,
+    jun: 6, june: 6,
+    jul: 7, july: 7,
+    aug: 8, august: 8,
+    sep: 9, sept: 9, september: 9,
+    oct: 10, october: 10,
+    nov: 11, november: 11,
+    dec: 12, december: 12,
+  };
+  let key = rawMonth;
+  if (!EN_MONTH[key] && key.length > 3) key = key.slice(0, 3);
+  const month = EN_MONTH[key];
+  if (!month) return null;
+
+  const year = m[3] ? parseInt(m[3], 10) : now.year;
+
+  let hour = existingDt ? existingDt.hour : 12;
+  let minute = existingDt ? existingDt.minute : 0;
+  if (m[4]) {
+    hour = parseInt(m[4], 10);
+    minute = m[5] ? parseInt(m[5], 10) : 0;
+    const ap = (m[6] || "").toLowerCase();
+    if (ap === "pm" && hour < 12) hour += 12;
+    if (ap === "am" && hour === 12) hour = 0;
+  }
+
+  const dt = DateTime.fromObject(
+    { year, month, day, hour, minute, second: 0, millisecond: 0 },
+    { zone: jordanZone }
+  );
+  return dt.toISO();
+}
+
 /**
  * Converts all Western digits in a string to Arabic-Indic digits.
  */
@@ -160,7 +216,8 @@ async function postNameResumeAfterFirstReply({
     if (userLang === "ar") cleaned = cleanArabicForDate(originalMsg);
     const startISO =
       extractArabicDate(cleaned) ||
-      parseJordanDateTime(cleaned, null, userLang);
+      parseJordanDateTime(cleaned, null, userLang) ||
+      parseMonthWordFallback(cleaned, null);
 
     // A) Full booking in first message → confirm now
     if (picked && startISO) {
@@ -187,7 +244,12 @@ async function postNameResumeAfterFirstReply({
       }
 
       // Capacity guard
-      const okCap = await guardMaxConcurrent(startISO, durationMin, userLang, res);
+      const okCap = await guardMaxConcurrent(
+        startISO,
+        durationMin,
+        userLang,
+        res
+      );
       if (!okCap) return;
 
       // Create booking
@@ -207,8 +269,13 @@ async function postNameResumeAfterFirstReply({
 
       let confirm =
         userLang === "ar"
-          ? `✅ تم الحجز لـ ${svcTxt} – ${whenTxt}. رقمك: BR-${String(id).slice(0,6)}.`
-          : `✅ Booked for ${svcTxt} – ${whenTxt}. Your ID: BR-${String(id).slice(0,6)}.`;
+          ? `✅ تم الحجز لـ ${svcTxt} – ${whenTxt}. رقمك: BR-${String(id).slice(
+              0,
+              6
+            )}.`
+          : `✅ Booked for ${svcTxt} – ${whenTxt}. Your ID: BR-${String(
+              id
+            ).slice(0, 6)}.`;
 
       if (userLang === "ar") confirm = toArabicDigits(confirm);
       return sendReply(res, `${thanks}\n\n${confirm}`);
@@ -336,10 +403,6 @@ function overlaps(aStart, aEnd, bStart, bEnd) {
   return aStart < bEnd && bStart < aEnd;
 }
 
-function overlaps(aStart, aEnd, bStart, bEnd) {
-  return aStart < bEnd && bStart < aEnd;
-}
-
 // Find the nearest free slots before/after the requested time.
 // Keeps stepping by 30 minutes (configurable) within the SAME day & business hours.
 async function findNearestAvailableSlots(
@@ -429,7 +492,7 @@ async function guardMaxConcurrent(
   durationMin,
   userLang,
   res,
-  { excludeId } = {}
+  { excludeId, phone } = {}
 ) {
   if (!Number.isFinite(MAX_CONCURRENT) || MAX_CONCURRENT < 1) return true;
 
@@ -449,14 +512,60 @@ async function guardMaxConcurrent(
 
     let msg = BOT_MESSAGES.fullyBooked[userLang];
 
+    // Build suggestions (forward-only 30-min steps) and include existing nearest ones when relevant
     const suggestions = [];
-    if (beforeISO) suggestions.push(`• ${fmtTime(beforeISO)}`);
-    if (afterISO) suggestions.push(`• ${fmtTime(afterISO)}`);
+    const suggestionIsos = [];
+
+    // Forward-only probing: +30, +60, +90 within same day and business hours
+    try {
+      const center = DateTime.fromISO(startISO).setZone(TIME_ZONE);
+      const stepMin = 30;
+      for (let hop = 1; hop <= 6 && suggestions.length < 3; hop++) {
+        const candDT = center.plus({ minutes: stepMin * hop });
+        const candISO = candDT.toISO();
+        const withinBH =
+          isWithinBusinessHours(candISO, durationMin) &&
+          candDT.hasSame(center, "day");
+        if (!withinBH) continue;
+        const cur = await countConcurrentAt(candISO, durationMin, { excludeId });
+        if (
+          !Number.isFinite(MAX_CONCURRENT) ||
+          MAX_CONCURRENT < 1 ||
+          cur < MAX_CONCURRENT
+        ) {
+          suggestions.push(`• ${fmtTime(candISO)}`);
+          suggestionIsos.push(candISO);
+        }
+      }
+    } catch (e) {
+      // If forward probing fails for any reason, fall back silently
+    }
+
+    // Fallback to existing nearest suggestions if forward set is empty
+    if (suggestions.length === 0) {
+      if (beforeISO) suggestions.push(`• ${fmtTime(beforeISO)}`);
+      if (afterISO) suggestions.push(`• ${fmtTime(afterISO)}`);
+    }
 
     if (suggestions.length > 0) {
-      msg += `\n\n${BOT_MESSAGES.suggestIntro[userLang]}\n${suggestions.join(
-        "\n"
-      )}\n\n${BOT_MESSAGES.suggestCTA[userLang]}`;
+      if (phone && suggestionIsos.length > 0) {
+        // Offer first forward suggestion with yes/no flow
+        const firstIso = suggestionIsos[0];
+        const firstTime = fmtTime(firstIso);
+        try {
+          cache.set(`${phone}-suggest-iso`, firstIso);
+          cache.set(`${phone}-suggest-duration`, durationMin);
+        } catch {}
+        const prompt =
+          userLang === "ar"
+            ? `\n\nعنا وقت متاح الساعة ${firstTime}. أأغير الحجز لهل وقت؟ (نعم / لا)`
+            : `\n\nWe have a spot at ${firstTime}. Move your booking to this time? (yes / no)`;
+        msg += prompt;
+      } else {
+        msg += `\n\n${BOT_MESSAGES.suggestIntro[userLang]}\n${suggestions.join(
+          "\n"
+        )}\n\n${BOT_MESSAGES.suggestCTA[userLang]}`;
+      }
     }
 
     if (userLang === "ar") msg = toArabicDigits(msg);
@@ -659,7 +768,7 @@ const BOT_MESSAGES = {
       `لقيت حجز واحد: ${svcNames} يوم ${when}. بدك تلغيه؟ (نعم / لا)`,
   },
   askName: {
-    en: "Hi! I don’t have your name yet — what should I call you?",
+    en: "Hi! I don't have your name yet — what should I call you?",
     ar: "مرحباً! لسه ما عندي اسمك — شو اسمك الكريم؟",
   },
   thanksNamePersonal: {
@@ -721,7 +830,7 @@ const BOT_MESSAGES = {
       `⏰ الوقت خارج أوقات الدوام (${windowTxt}). ابعت وقت ضمن أوقات الدوام.`,
   },
   closedThatDay: {
-    en: (dayTxt) => `⏰ We’re closed on ${dayTxt}. Please pick another day.`,
+    en: (dayTxt) => `⏰ We're closed on ${dayTxt}. Please pick another day.`,
     ar: (dayTxt) => `⏰ إحنا مسكّرين يوم ${dayTxt}. اختار يوم تاني لو سمحت.`,
   },
 };
@@ -812,7 +921,7 @@ async function handleIncomingMessage(req, res) {
       const again =
         userLang === "ar"
           ? "الاسم مش واضح. اكتب اسمك الأول والأخير لو سمحت."
-          : "That doesn’t look like a name. Please send your first and last name.";
+          : "That doesn't look like a name. Please send your first and last name.";
       return sendReply(res, userLang === "ar" ? toArabicDigits(again) : again);
     }
 
@@ -906,7 +1015,8 @@ async function handleIncomingMessage(req, res) {
 
       const startISO =
         extractArabicDate(cleaned) ||
-        parseJordanDateTime(cleaned, null, userLang);
+        parseJordanDateTime(cleaned, null, userLang) ||
+        parseMonthWordFallback(cleaned, null);
 
       if (startISO) {
         const durationMin = picked.duration_min || 45;
@@ -1072,33 +1182,93 @@ async function handleIncomingMessage(req, res) {
         parseJordanDateTime(cleaned, existingBooking.start_at, userLang);
       console.log("Quick update newISO:", newISO);
 
-      if (
-        !newISO &&
-        !(
-          incomingMsg.toLowerCase().includes("pedicure") ||
-          incomingMsg.toLowerCase().includes("manicure")
-        )
-      ) {
+      // Note: Do not fail here just because we didn't parse a time; we may still match a service-only update.
+
+      const updateFields = { id };
+      if (newISO) updateFields.newStartISO = newISO;
+      const allSvcs = await listServices();
+      const norm = (s) => stripPunc(s || "");
+      const msgNorm = norm(incomingMsg);
+
+      // 1) exact phrase match (e.g., "classic pedicure")
+      const exactMatches = allSvcs.filter((s) => {
+        const en = norm(s.name_en);
+        const ar = norm(s.name_ar);
+        return (en && msgNorm.includes(en)) || (ar && msgNorm.includes(ar));
+      });
+
+      // 2) fallback: category tokens
+      const wantsPedicure = msgNorm.includes("pedicure");
+      const wantsManicure = msgNorm.includes("manicure");
+      const pickNamesBy = (needle) =>
+        allSvcs
+          .filter(
+            (s) =>
+              norm(s.name_en).includes(needle) ||
+              norm(s.name_ar).includes(needle)
+          )
+          .map((s) => s.name_en || s.name_ar)
+          .filter(Boolean);
+
+      let chosenNames = [];
+      if (exactMatches.length) {
+        chosenNames = exactMatches
+          .map((s) => s.name_en || s.name_ar)
+          .filter(Boolean);
+      } else {
+        chosenNames = [
+          ...(wantsPedicure ? pickNamesBy("pedicure") : []),
+          ...(wantsManicure ? pickNamesBy("manicure") : []),
+        ];
+      }
+
+      // De-dupe and set
+      chosenNames = [...new Set(chosenNames)];
+      if (chosenNames.length) {
+        updateFields.newServices = chosenNames; // send NAMES; bookingService will map → IDs
+      }
+
+      // Re-parse time/date after removing matched service names
+      if (!newISO && chosenNames.length) {
+        const normTok = (s) => stripPunc(s || "");
+        const removeTokens = chosenNames.map(normTok).filter(Boolean);
+        let stripped = stripPunc(cleaned);
+        for (const tok of removeTokens) {
+          if (tok) stripped = stripped.replace(tok, " ").replace(/\s+/g, " ").trim();
+        }
+        if (stripped) {
+          const reparsed = parseJordanDateTime(stripped, existingBooking.start_at, userLang);
+          if (reparsed) {
+            newISO = reparsed;
+            updateFields.newStartISO = newISO;
+          }
+        }
+      }
+
+      // If we detected neither a time nor any service names, then fail here
+      if (!updateFields.newStartISO && !updateFields.newServices) {
         const twiml = new twilio.twiml.MessagingResponse();
         twiml.message(BOT_MESSAGES.dateParseFail[userLang]);
         return res.type("text/xml").send(twiml.toString());
       }
-
-      const updateFields = { id };
-      if (newISO) updateFields.newStartISO = newISO;
-      if (incomingMsg.toLowerCase().includes("pedicure"))
-        updateFields.newServices = ["Pedicure"];
-      if (incomingMsg.toLowerCase().includes("manicure"))
-        updateFields.newServices = ["Manicure"];
-
       if (updateFields.newStartISO || updateFields.newServices) {
         if (newISO) {
-          const svcTotal = Array.isArray(existingBooking?.services)
-            ? existingBooking.services.reduce((sum, s) => {
-                const d = s.service?.duration_min ?? s.duration_min ?? 0;
-                return sum + (Number.isFinite(d) ? d : 0);
-              }, 0)
-            : 0;
+          // Use duration of newly chosen services if provided; otherwise fall back to existing booking services
+          const baseList = chosenNames.length
+            ? allSvcs.filter((s) => {
+                const nmEn = (s.name_en || "").trim().toLowerCase();
+                const nmAr = (s.name_ar || "").trim().toLowerCase();
+                return chosenNames.some((n) => {
+                  const nn = (n || "").trim().toLowerCase();
+                  return nn === nmEn || nn === nmAr;
+                });
+              })
+            : (Array.isArray(existingBooking?.services) ? existingBooking.services : []);
+          const svcTotal = baseList.reduce((sum, s) => {
+            const d = (s.duration_min ?? s.service?.duration_min) ?? 0;
+            const n = Number(d);
+            return sum + (Number.isFinite(n) ? n : 0);
+          }, 0);
           const durationMin = svcTotal || 45;
 
           const winTxt = formatWindowForReply(newISO, userLang);
@@ -1185,6 +1355,35 @@ async function handleIncomingMessage(req, res) {
   if (pendingArr && pendingArr.length === 1) {
     if (yesRe.test(incomingMsg)) {
       if (mode === "update") {
+        // Accept suggested capacity time if present
+        const suggestISO = cache.get(`${fromPhone}-suggest-iso`);
+        const suggestDur = cache.get(`${fromPhone}-suggest-duration`) || 45;
+        if (suggestISO) {
+          cache.delete(`${fromPhone}-suggest-iso`);
+          cache.delete(`${fromPhone}-suggest-duration`);
+          const arr = cache.get(fromPhone) || [];
+          const id = arr[0];
+          if (id) {
+            try {
+              await updateBooking({ id, newStartISO: suggestISO });
+              cache.delete(fromPhone);
+              cache.delete(`${fromPhone}-mode`);
+              clearSelection(fromPhone);
+              const newTime = formatWhatsAppDate(suggestISO, userLang);
+              let msg = BOT_MESSAGES.updatePrefix[userLang] +
+                BOT_MESSAGES.updateNewTime[userLang](newTime) +
+                BOT_MESSAGES.anythingElse[userLang];
+              if (userLang === "ar") msg = toArabicDigits(msg);
+              const tw = new twilio.twiml.MessagingResponse();
+              tw.message(msg);
+              return res.type("text/xml").send(tw.toString());
+            } catch (e) {
+              const tw = new twilio.twiml.MessagingResponse();
+              tw.message(BOT_MESSAGES.updateError[userLang]);
+              return res.type("text/xml").send(tw.toString());
+            }
+          }
+        }
         const twiml = new twilio.twiml.MessagingResponse();
         twiml.message(BOT_MESSAGES.updateWhat[userLang]);
         return res.type("text/xml").send(twiml.toString());
@@ -1357,7 +1556,8 @@ async function handleIncomingMessage(req, res) {
 
     const startISO =
       extractArabicDate(cleaned) ||
-      parseJordanDateTime(cleaned, null, userLang);
+      parseJordanDateTime(cleaned, null, userLang) ||
+      parseMonthWordFallback(cleaned, null);
 
     if (!startISO) {
       let msg = BOT_MESSAGES.bookingDateFail[userLang];
@@ -1631,132 +1831,7 @@ ${menuText}
     }
 
     if (name === "update_my_booking") {
-      console.log("GPT functionCall received:", name, args);
-      const arr = cache.get(fromPhone) || [];
-      const idx = args.booking_index ?? 1;
-      const id = arr[idx - 1];
-
-      if (!id) {
-        const twiml = new twilio.twiml.MessagingResponse();
-        twiml.message("I can't find that booking number.");
-        return res.type("text/xml").send(twiml.toString());
-      }
-
-      let newISO = null;
-      let existingBooking = null;
-      if (args.new_start_text) {
-        try {
-          existingBooking = await getBookingDetails(id);
-          newISO = parseJordanDateTime(
-            args.new_start_text,
-            existingBooking.start_at,
-            userLang
-          );
-          console.log("GPT update newISO:", newISO);
-          if (!newISO) {
-            const twiml = new twilio.twiml.MessagingResponse();
-            twiml.message(BOT_MESSAGES.dateParseFail[userLang]);
-            return res.type("text/xml").send(twiml.toString());
-          }
-        } catch (error) {
-          console.error("GPT update (date/time) error:", error);
-          const twiml = new twilio.twiml.MessagingResponse();
-          twiml.message(
-            "Sorry, there was an error accessing your booking details."
-          );
-          return res.type("text/xml").send(twiml.toString());
-        }
-      }
-
-      // Guard: only if user is changing time
-      if (newISO) {
-        const svcTotal = Array.isArray(existingBooking?.services)
-          ? existingBooking.services.reduce((sum, s) => {
-              const d = s.service?.duration_min ?? s.duration_min ?? 0;
-              return sum + (Number.isFinite(d) ? d : 0);
-            }, 0)
-          : 0;
-        const durationMin = svcTotal || 45;
-
-        const winTxt = formatWindowForReply(newISO, userLang);
-        const within = isWithinBusinessHours(newISO, durationMin);
-        const { closed } = getBusinessWindowFor(newISO);
-
-        if (closed) {
-          let msg = BOT_MESSAGES.closedThatDay[userLang](
-            dayLabel(newISO, userLang)
-          );
-          if (userLang === "ar") msg = toArabicDigits(msg);
-          const twiml = new twilio.twiml.MessagingResponse();
-          twiml.message(msg);
-          return res.type("text/xml").send(twiml.toString());
-        }
-        if (!within) {
-          let msg = BOT_MESSAGES.outsideBusinessHours[userLang](winTxt || "-");
-          if (userLang === "ar") msg = toArabicDigits(msg);
-          const twiml = new twilio.twiml.MessagingResponse();
-          twiml.message(msg);
-          return res.type("text/xml").send(twiml.toString());
-        }
-
-        // NEW: concurrency guard (GPT update; exclude this booking)
-        const okCap4 = await guardMaxConcurrent(
-          newISO,
-          durationMin,
-          userLang,
-          res,
-          { excludeId: id }
-        );
-        if (!okCap4) return;
-      }
-
-      if (newISO || (args.new_service_names && args.new_service_names.length)) {
-        try {
-          const updatedBooking = await updateBooking({
-            id,
-            newStartISO: newISO,
-            newServices: args.new_service_names,
-          });
-
-          await sendWhatsAppBookingUpdate(fromPhone, updatedBooking);
-
-          cache.delete(fromPhone);
-          cache.delete(`${fromPhone}-mode`);
-          clearSelection(fromPhone);
-
-          let updateMsg = "🔄 Updated your booking!";
-          if (newISO && args.new_service_names?.length) {
-            const newTime = DateTime.fromISO(newISO)
-              .setZone(TIME_ZONE)
-              .toFormat("ccc d LLL HH:mm");
-            updateMsg += ` New time: ${newTime}, New services: ${args.new_service_names.join(
-              ", "
-            )}`;
-          } else if (newISO) {
-            const newTime = DateTime.fromISO(newISO)
-              .setZone(TIME_ZONE)
-              .toFormat("ccc d LLL HH:mm");
-            updateMsg += ` New time: ${newTime}`;
-          } else if (args.new_service_names?.length) {
-            updateMsg += ` New services: ${args.new_service_names.join(", ")}`;
-          }
-
-          const twiml = new twilio.twiml.MessagingResponse();
-          twiml.message(
-            updateMsg + "\n\nLet me know if there's anything else!"
-          );
-          return res.type("text/xml").send(twiml.toString());
-        } catch (error) {
-          console.error("Update booking failed:", error);
-          const twiml = new twilio.twiml.MessagingResponse();
-          twiml.message(BOT_MESSAGES.updateError[userLang]);
-          return res.type("text/xml").send(twiml.toString());
-        }
-      } else {
-        const twiml = new twilio.twiml.MessagingResponse();
-        twiml.message("I couldn't understand your update request.");
-        return res.type("text/xml").send(twiml.toString());
-      }
+      return handleUpdateBooking(args, fromPhone, userLang, res);
     }
 
     if (name === "ask_what_to_update") {
@@ -1783,6 +1858,7 @@ ${menuText}
     const arr = pending2;
     const id = arr[0];
     let newISO = null;
+    let serviceNamesForReply = null;
     try {
       const existingBooking = await getBookingDetails(id);
       newISO = parseJordanDateTime(
@@ -1793,13 +1869,46 @@ ${menuText}
 
       console.log("Fallback update newISO:", newISO);
 
-      if (
-        !newISO &&
-        !(
-          incomingMsg.toLowerCase().includes("pedicure") ||
-          incomingMsg.toLowerCase().includes("manicure")
-        )
-      ) {
+      // Try to extract requested services from free text
+      let matchedServices = [];
+      try {
+        const allServices = await listServices();
+        const normMsg = stripPunc(incomingMsg).toLowerCase();
+        matchedServices = (allServices || []).filter((s) => {
+          const names = [s.name_en || "", s.name_ar || ""]
+            .map((n) => stripPunc(n).toLowerCase())
+            .filter(Boolean);
+          return names.some((n) => n && normMsg.includes(n));
+        });
+        if (matchedServices.length) {
+          console.log(
+            "Fallback: matched services from message ->",
+            matchedServices.map((s) => s.name_en || s.name_ar),
+            "ids=",
+            matchedServices.map((s) => s.id ?? s.service_id)
+          );
+        }
+      } catch (e) {
+        console.error("Fallback: error matching services from message:", e);
+      }
+
+      // Re-parse time/date after removing matched service names
+      if (!newISO && matchedServices.length) {
+        const normTok = (s) => stripPunc(s || "");
+        const removeTokens = matchedServices
+          .map((s) => normTok(s.name_en) || normTok(s.name_ar))
+          .filter(Boolean);
+        let stripped = stripPunc(incomingMsg);
+        for (const tok of removeTokens) {
+          if (tok) stripped = stripped.replace(tok, " ").replace(/\s+/g, " ").trim();
+        }
+        if (stripped) {
+          const reparsed = parseJordanDateTime(stripped, existingBooking.start_at, userLang);
+          if (reparsed) newISO = reparsed;
+        }
+      }
+
+      if (!newISO && matchedServices.length === 0) {
         const twiml = new twilio.twiml.MessagingResponse();
         twiml.message(BOT_MESSAGES.dateParseFail[userLang]);
         return res.type("text/xml").send(twiml.toString());
@@ -1807,19 +1916,27 @@ ${menuText}
 
       const updateFields = { id };
       if (newISO) updateFields.newStartISO = newISO;
-      if (incomingMsg.toLowerCase().includes("pedicure"))
-        updateFields.newServices = ["Pedicure"];
-      if (incomingMsg.toLowerCase().includes("manicure"))
-        updateFields.newServices = ["Manicure"];
+      if (matchedServices.length > 0) {
+        updateFields.newServices = matchedServices
+          .map((s) => s.name_en || s.name_ar)
+          .filter(Boolean);
+
+        serviceNamesForReply = matchedServices.map((s) =>
+          userLang === "ar" ? s.name_ar || s.name_en : s.name_en || s.name_ar
+        );
+      }
 
       if (updateFields.newStartISO || updateFields.newServices) {
         if (newISO) {
-          const svcTotal = Array.isArray(existingBooking?.services)
-            ? existingBooking.services.reduce((sum, s) => {
-                const d = s.service?.duration_min ?? s.duration_min ?? 0;
-                return sum + (Number.isFinite(d) ? d : 0);
-              }, 0)
-            : 0;
+          // Use duration of matched services if provided; otherwise fall back to existing booking services
+          const baseList = matchedServices.length > 0
+            ? matchedServices
+            : (Array.isArray(existingBooking?.services) ? existingBooking.services : []);
+          const svcTotal = baseList.reduce((sum, s) => {
+            const d = (s.duration_min ?? s.service?.duration_min) ?? 0;
+            const n = Number(d);
+            return sum + (Number.isFinite(n) ? n : 0);
+          }, 0);
           const durationMin = svcTotal || 45;
 
           const winTxt = formatWindowForReply(newISO, userLang);
@@ -1871,7 +1988,9 @@ ${menuText}
           updateMsg += ` New time: ${newTime}`;
         }
         if (updateFields.newServices) {
-          updateMsg += ` New services: ${updateFields.newServices.join(", ")}`;
+          const namesForReply =
+            serviceNamesForReply || updateFields.newServices;
+          updateMsg += ` New services: ${namesForReply.join(", ")}`;
         }
 
         const twiml = new twilio.twiml.MessagingResponse();
@@ -1892,6 +2011,246 @@ ${menuText}
 
   const twiml = new twilio.twiml.MessagingResponse();
   twiml.message(BOT_MESSAGES.fallback[userLang]);
+  return res.type("text/xml").send(twiml.toString());
+}
+
+async function handleUpdateBooking(args, fromPhone, userLang, res) {
+  const twiml = new twilio.twiml.MessagingResponse();
+
+  // 1. Get Booking ID from cache
+  const bookingIdArr = cache.get(fromPhone) || [];
+  const bookingIndex = args.booking_index ?? 1;
+  const bookingId = bookingIdArr[bookingIndex - 1];
+
+  if (!bookingId) {
+    twiml.message(BOT_MESSAGES.unknownBookingNumber[userLang]);
+    return res.type("text/xml").send(twiml.toString());
+  }
+
+  // 2. Fetch details for existing booking and all available services
+  let existingBooking;
+  let allServices;
+  try {
+    [existingBooking, allServices] = await Promise.all([
+      getBookingDetails(bookingId),
+      listServices(),
+    ]);
+    // Normalize services list to have a stable 'id' key
+    if (Array.isArray(allServices)) {
+      allServices = allServices.map((s) => ({
+        ...s,
+        id: s.id ?? s.service_id,
+      }));
+    }
+  } catch (error) {
+    console.error("Error fetching booking/service details:", error);
+    twiml.message(BOT_MESSAGES.updateError[userLang]);
+    return res.type("text/xml").send(twiml.toString());
+  }
+
+  if (!existingBooking) {
+    twiml.message(BOT_MESSAGES.unknownBookingNumber[userLang]);
+    return res.type("text/xml").send(twiml.toString());
+  }
+
+  // 3. Initialize new booking details with existing values
+  let newStartISO = existingBooking.start_at;
+  // Ensure we carry over current services with a normalized 'id'
+  let newServices = Array.isArray(existingBooking.services)
+    ? existingBooking.services.map((s) => ({ ...s, id: s.id ?? s.service_id }))
+    : [];
+
+  try {
+    console.log(
+      "handleUpdateBooking:init bookingId=%s, currentServiceIds=%o, requested=%o",
+      bookingId,
+      newServices.map((s) => s.id),
+      args && args.new_service_names
+    );
+  } catch {}
+
+  let hasDateOrTimeUpdate = false;
+  let hasServiceUpdate = false;
+
+  // 4. Parse and validate new services, if provided
+  if (
+    Array.isArray(args.new_service_names) &&
+    args.new_service_names.length > 0
+  ) {
+    const requestedServiceNames = args.new_service_names.map((s) =>
+      stripPunc(s)
+    );
+    const foundServices = [];
+    for (const requestedName of requestedServiceNames) {
+      const found = allServices.find((s) => {
+        const cand = [s.name_en || "", s.name_ar || ""].map(stripPunc);
+        return cand.some(
+          (v) => v && (v === requestedName || v.includes(requestedName))
+        );
+      });
+      if (found) {
+        foundServices.push(found);
+      }
+    }
+
+    if (foundServices.length !== requestedServiceNames.length) {
+      const notFound = requestedServiceNames.filter(
+        (name) =>
+          !allServices.some(
+            (s) =>
+              stripPunc(s.name_en || "").includes(name) ||
+              stripPunc(s.name_ar || "").includes(name)
+          )
+      );
+      const msg =
+        userLang === "ar"
+          ? `عذراً، لم نجد الخدمة: ${notFound.join(", ")}`
+          : `Sorry, I couldn't find the service: ${notFound.join(", ")}.`;
+      twiml.message(msg);
+      return res.type("text/xml").send(twiml.toString());
+    }
+
+    const newServiceIds = new Set(
+      foundServices.map((s) => s.id ?? s.service_id)
+    );
+    const oldServiceIds = new Set(newServices.map((s) => s.id ?? s.service_id));
+
+    if (
+      newServiceIds.size !== oldServiceIds.size ||
+      [...newServiceIds].some((id) => !oldServiceIds.has(id))
+    ) {
+      hasServiceUpdate = true;
+      newServices = foundServices.map((s) => ({
+        ...s,
+        id: s.id ?? s.service_id,
+      }));
+      try {
+        console.log(
+          "handleUpdateBooking: service change detected -> %o",
+          Array.from(newServiceIds)
+        );
+      } catch {}
+    }
+  }
+
+  // 5. Parse new date/time, if provided
+  if (args.new_start_text) {
+    const parsedTimeISO = parseJordanDateTime(
+      args.new_start_text,
+      existingBooking.start_at,
+      userLang
+    );
+
+    if (!parsedTimeISO) {
+      twiml.message(BOT_MESSAGES.dateParseFail[userLang]);
+      return res.type("text/xml").send(twiml.toString());
+    }
+
+    // Check if there is a meaningful change in time (e.g., > 1 minute)
+    const diff = Math.abs(
+      DateTime.fromISO(parsedTimeISO).diff(
+        DateTime.fromISO(newStartISO),
+        "minutes"
+      ).minutes
+    );
+    if (diff > 1) {
+      hasDateOrTimeUpdate = true;
+      newStartISO = parsedTimeISO;
+    }
+  }
+
+  // 6. Check if anything actually changed
+  if (!hasDateOrTimeUpdate && !hasServiceUpdate) {
+    const msg =
+      userLang === "ar" ? "لم يتم اكتشاف أي تغييرات." : "No changes detected.";
+    twiml.message(msg);
+    return res.type("text/xml").send(twiml.toString());
+  }
+
+  // 7. Validations for the new booking state
+  const newDurationMin = newServices.reduce(
+    (sum, s) => sum + (Number(s.duration_min) || 0),
+    0
+  );
+
+  // a. Past time validation
+  if (DateTime.fromISO(newStartISO) < DateTime.now().setZone(TIME_ZONE)) {
+    const msg =
+      userLang === "ar"
+        ? "لا يمكن تحديث الحجز لوقت في الماضي."
+        : "Cannot update booking to a past time.";
+    twiml.message(msg);
+    return res.type("text/xml").send(twiml.toString());
+  }
+
+  // b. Business hours validation
+  const { closed } = getBusinessWindowFor(newStartISO);
+  if (closed) {
+    let msg = BOT_MESSAGES.closedThatDay[userLang](
+      dayLabel(newStartISO, userLang)
+    );
+    if (userLang === "ar") msg = toArabicDigits(msg);
+    twiml.message(msg);
+    return res.type("text/xml").send(twiml.toString());
+  }
+  const winTxt = formatWindowForReply(newStartISO, userLang);
+  const within = isWithinBusinessHours(newStartISO, newDurationMin);
+  if (!within) {
+    let msg = BOT_MESSAGES.outsideBusinessHours[userLang](winTxt || "-");
+    if (userLang === "ar") msg = toArabicDigits(msg);
+    twiml.message(msg);
+    return res.type("text/xml").send(twiml.toString());
+  }
+  // c. Concurrency validation
+  const isConcurrent = await guardMaxConcurrent(
+    newStartISO,
+    newDurationMin,
+    userLang,
+    res,
+    { excludeId: bookingId }
+  );
+  if (!isConcurrent) {
+    // guardMaxConcurrent sends its own reply
+    return;
+  }
+  // 8. Execute the update
+  try {
+    await updateBooking({
+      id: bookingId,
+      newStartISO: hasDateOrTimeUpdate ? newStartISO : undefined,
+      // pass names, not IDs
+      newServices: hasServiceUpdate
+        ? newServices.map((s) => s.name_en || s.name_ar).filter(Boolean)
+        : undefined,
+    });
+  } catch (error) {
+    console.error("Update booking failed:", error);
+    twiml.message(BOT_MESSAGES.updateError[userLang]);
+    return res.type("text/xml").send(twiml.toString());
+  }
+
+  // 9. Send confirmation
+  cache.delete(fromPhone);
+  cache.delete(`${fromPhone}-mode`);
+  clearSelection(fromPhone);
+
+  let confirmMsg = BOT_MESSAGES.updatePrefix[userLang];
+  if (hasDateOrTimeUpdate) {
+    const newTime = formatWhatsAppDate(newStartISO, userLang);
+    confirmMsg += BOT_MESSAGES.updateNewTime[userLang](newTime);
+  }
+  if (hasServiceUpdate) {
+    const newServiceNames = joinServiceNames(
+      newServices.map((s) => ({ service: s })),
+      userLang
+    );
+    confirmMsg += BOT_MESSAGES.updateNewServices[userLang](newServiceNames);
+  }
+  confirmMsg += BOT_MESSAGES.anythingElse[userLang];
+
+  if (userLang === "ar") confirmMsg = toArabicDigits(confirmMsg);
+
+  twiml.message(confirmMsg);
   return res.type("text/xml").send(twiml.toString());
 }
 

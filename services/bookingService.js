@@ -13,6 +13,19 @@ const supabase = createClient(
 
 const TIME_ZONE = "Asia/Amman";
 
+function _normName(s = "") {
+  return String(s)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, "")
+    .trim();
+}
+function _looksLikeUuid(v) {
+  return typeof v === "string" && /^[0-9a-f-]{8,}$/i.test(v);
+}
+function _looksLikeNumeric(v) {
+  return typeof v === "number" || (typeof v === "string" && /^\d+$/.test(v));
+}
+
 // Insert a new booking and associated services
 async function makeBooking({ phone, names, startISO }) {
   // snapshot English name from customers (if exists)
@@ -39,6 +52,7 @@ async function makeBooking({ phone, names, startISO }) {
 
   return data.id;
 }
+
 
 
 // Get all upcoming bookings for a phone number
@@ -88,61 +102,6 @@ async function cancelBooking(id) {
 async function getBookingDetails(id) {
   const { data, error } = await supabase
     .from("bookings")
-    .select("*, services:booking_services(name_en)")
-    .eq("id", id)
-    .single();
-  if (error) throw error;
-  return data;
-}
-
-async function updateBooking({
-  id,
-  newStartISO = undefined,
-  newEndISO = undefined,
-  newPhone = undefined,
-  newCustomerName = undefined,
-  newNotes = undefined,
-  newTotalPrice = undefined,
-  newTotalDuration = undefined,
-  newServices = undefined, // Array of service_id or undefined
-}) {
-  const updates = {};
-
-  if (newStartISO !== undefined && newStartISO !== null)
-    updates.start_at = newStartISO;
-  if (newEndISO !== undefined && newEndISO !== null) updates.end_at = newEndISO;
-  if (newPhone !== undefined && newPhone !== null)
-    updates.customer_phone = newPhone;
-  if (newCustomerName !== undefined && newCustomerName !== null)
-    updates.customer_name = newCustomerName;
-  if (newNotes !== undefined && newNotes !== null) updates.notes = newNotes;
-  if (newTotalPrice !== undefined && newTotalPrice !== null)
-    updates.total_price = newTotalPrice;
-  if (newTotalDuration !== undefined && newTotalDuration !== null)
-    updates.total_duration = newTotalDuration;
-  updates.modified_at = DateTime.now().setZone(TIME_ZONE).toISO();
-
-  // 1. Update bookings table if there are changes
-  if (Object.keys(updates).length > 0) {
-    const { error } = await supabase
-      .from("bookings")
-      .update(updates)
-      .eq("id", id);
-    if (error) throw error;
-  }
-
-  // 2. Update booking_services via the new RPC function if newServices is defined (even if empty)
-  if (newServices !== undefined) {
-    const { error: rpcError } = await supabase.rpc("replace_booking_services", {
-      p_booking_id: id,
-      p_service_ids: newServices, // Array of service_id
-    });
-    if (rpcError) throw rpcError;
-  }
-
-  // 3. Fetch fresh booking + joined services (with all service details for the UI)
-  const { data: bookingRows, error: fetchError } = await supabase
-    .from("bookings")
     .select(
       `
       *,
@@ -158,16 +117,246 @@ async function updateBooking({
     `
     )
     .eq("id", id)
-    .limit(1);
+    .single();
+  if (error) throw error;
+  return data;
+}
 
-  if (fetchError) throw fetchError;
-  const updatedBooking = bookingRows && bookingRows[0];
-  if (!updatedBooking) {
-    throw new Error(`Booking with ID ${id} not found after update.`);
+async function updateBooking({
+  id,
+  newStartISO,
+  newEndISO,
+  newPhone,
+  newCustomerName,
+  newNotes,
+  newTotalPrice,
+  newTotalDuration,
+  newServices, // array of service IDs or EN/AR names; [] => clear all
+}) {
+  const t0 = Date.now();
+  try {
+    console.log("[updateBooking] ▶ start", {
+      id,
+      hasNewStartISO: newStartISO != null,
+      hasNewEndISO: newEndISO != null,
+      hasNewPhone: newPhone != null,
+      hasNewCustomerName: newCustomerName != null,
+      hasNewNotes: newNotes != null,
+      hasNewTotalPrice: newTotalPrice != null,
+      hasNewTotalDuration: newTotalDuration != null,
+      hasNewServices: newServices !== undefined,
+      newServicesPreview:
+        Array.isArray(newServices) && newServices.length
+          ? newServices.slice(0, 5)
+          : newServices,
+    });
+
+    // --- 1) Update the bookings row ---
+    const input = {
+      newStartISO,
+      newEndISO,
+      newPhone,
+      newCustomerName,
+      newNotes,
+      newTotalPrice,
+      newTotalDuration,
+    };
+
+    const fieldMap = {
+      newStartISO: "start_at",
+      newEndISO: "end_at",
+      newPhone: "customer_phone",
+      newCustomerName: "customer_name",
+      newNotes: "notes",
+      newTotalPrice: "total_price",
+      newTotalDuration: "total_duration",
+    };
+
+    const updates = { modified_at: DateTime.now().setZone(TIME_ZONE).toISO() };
+    for (const [k, v] of Object.entries(input)) {
+      if (v !== undefined && v !== null) updates[fieldMap[k]] = v;
+    }
+
+    console.log("[updateBooking] computed updates:", updates);
+
+    const tUpdate = Date.now();
+    const { error: updateErr } = await supabase
+      .from("bookings")
+      .update(updates)
+      .eq("id", id);
+    if (updateErr) {
+      console.error("[updateBooking] ❌ bookings update error:", updateErr);
+      throw updateErr;
+    }
+    console.log(
+      "[updateBooking] ✓ bookings row updated in",
+      `${Date.now() - tUpdate}ms`
+    );
+
+    // --- 2) Replace booking services if requested ---
+    if (newServices !== undefined) {
+      const tSvc = Date.now();
+      const requested = Array.isArray(newServices) ? newServices : [];
+
+      console.log("[updateBooking] services update intent:", {
+        booking_id: id,
+        requested_count: requested.length,
+        requested_preview: requested.slice(0, 10),
+      });
+
+      // Fetch once; build ID set + normalized name index
+      const { data: all, error: svcErr } = await supabase
+        .from("services")
+        .select("service_id, name_en, name_ar");
+      if (svcErr) {
+        console.error("[updateBooking] ❌ fetch services error:", svcErr);
+        throw svcErr;
+      }
+      console.log(
+        "[updateBooking] services fetched:",
+        (all || []).length,
+        "rows"
+      );
+
+      const idSet = new Set((all || []).map((s) => String(s.service_id)));
+      const nameIndex = new Map();
+      for (const s of all || []) {
+        const en = _normName(s.name_en || "");
+        const ar = _normName(s.name_ar || "");
+        if (en) nameIndex.set(en, s.service_id);
+        if (ar) nameIndex.set(ar, s.service_id);
+      }
+
+      const resolved = [];
+      const unresolved = [];
+
+      for (const raw of requested) {
+        const item = String(raw ?? "");
+        if (idSet.has(item)) {
+          resolved.push(item); // already a valid service_id
+          continue;
+        }
+        const key = _normName(item); // try EN/AR name
+        const sid = nameIndex.get(key);
+        if (sid) {
+          resolved.push(sid);
+        } else {
+          unresolved.push(item);
+        }
+      }
+
+      console.log("[updateBooking] service resolution summary:", {
+        requested_count: requested.length,
+        resolved_count: resolved.length,
+        resolved_ids_preview: resolved.slice(0, 10),
+        unresolved_preview: unresolved.slice(0, 10),
+      });
+
+      if (requested.length > 0 && resolved.length === 0) {
+        console.error(
+          "[updateBooking] ❌ none of the requested services resolved; aborting"
+        );
+        throw new Error("No matching services found for provided names/ids.");
+      }
+
+      console.log("[updateBooking] ▶ calling replace_booking_services RPC", {
+        booking_id: id,
+        p_service_ids_len: resolved.length,
+      });
+
+      const tRpc = Date.now();
+      const { error: rpcError } = await supabase.rpc(
+        "replace_booking_services",
+        {
+          p_booking_id: id,
+          p_service_ids: resolved, // may be empty: clears services
+        }
+      );
+      if (rpcError) {
+        console.error(
+          "[updateBooking] ❌ replace_booking_services RPC error:",
+          rpcError
+        );
+        throw rpcError;
+      }
+      console.log(
+        "[updateBooking] ✓ replace_booking_services OK in",
+        `${Date.now() - tRpc}ms (total service step ${Date.now() - tSvc}ms)`
+      );
+
+      // Optional verification read (best-effort)
+      try {
+        const { data: checkRows, error: checkErr } = await supabase
+          .from("booking_services")
+          .select("service_id")
+          .eq("booking_id", id);
+        if (checkErr) {
+          console.warn(
+            "[updateBooking] ⚠ post-RPC verification fetch error:",
+            checkErr
+          );
+        } else {
+          console.log(
+            "[updateBooking] post-RPC booking_services:",
+            (checkRows || []).map((r) => r.service_id)
+          );
+        }
+      } catch (e) {
+        console.warn(
+          "[updateBooking] ⚠ post-RPC verification exception:",
+          e?.message || e
+        );
+      }
+    }
+
+    // --- 3) Return the fresh booking with joined services for UI ---
+    const tFetch = Date.now();
+    const { data: updated, error: fetchErr } = await supabase
+      .from("bookings")
+      .select(
+        `
+        *,
+        services:booking_services (
+          service_id,
+          name_en,
+          name_ar,
+          category,
+          duration_min,
+          price_jd,
+          staff_level
+        )
+      `
+      )
+      .eq("id", id)
+      .single();
+    if (fetchErr) {
+      console.error("[updateBooking] ❌ fetch updated booking error:", fetchErr);
+      throw fetchErr;
+    }
+    if (!updated) {
+      console.error("[updateBooking] ❌ booking not found after update:", id);
+      throw new Error(`Booking with ID ${id} not found after update.`);
+    }
+    console.log(
+      "[updateBooking] ✓ fetched updated booking in",
+      `${Date.now() - tFetch}ms`
+    );
+
+    console.log(
+      "[updateBooking] ✅ done in",
+      `${Date.now() - t0}ms`,
+      "booking_id=",
+      id
+    );
+    return updated;
+  } catch (err) {
+    console.error("[updateBooking] ❌ failed", {
+      booking_id: id,
+      message: err?.message,
+      stack: err?.stack,
+    });
+    throw err;
   }
-
-  // 4. Return the updated booking (the 'services' array is now correct for your UI)
-  return updatedBooking;
 }
 
 async function makeBookingByServiceIds({ startISO, serviceIds, phone, name, notes }) {

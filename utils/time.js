@@ -1,7 +1,10 @@
+// time.js
 const { DateTime } = require("luxon");
 const { recognizeDateTime } = require("@microsoft/recognizers-text-suite");
 
-// Arabic day/month/relative mappings (still useful for fallback!)
+// =========================
+// AR / EN constants (yours)
+// =========================
 const AR_DAY = {
   الاحد: "sunday",
   الأحد: "sunday",
@@ -69,7 +72,8 @@ const AR_MONTH = {
 
 // put near your other constants
 const MONTH_RE =
-  "(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
+  "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
+
 
 const EN_MONTH = {
   jan: 1,
@@ -98,18 +102,25 @@ const EN_MONTH = {
   december: 12,
 };
 
-function arabicIndicToEnglish(str) {
+// =========================
+// util: digits + formatting
+// =========================
+function arabicIndicToEnglish(str = "") {
   return str.replace(/[٠-٩]/g, (d) => "0123456789"["٠١٢٣٤٥٦٧٨٩".indexOf(d)]);
 }
-function toArabicDigits(str) {
+function toArabicDigits(str = "") {
   return str.replace(/\d/g, (d) => "٠١٢٣٤٥٦٧٨٩"[d]);
 }
+
+// =====================================
+// map Arabic AM/PM and remove "ساعة"
+// =====================================
 function replaceArabicAmPm(text) {
   // strip tatweel + harakat
   text = text.replace(/\u0640/gu, "");
   text = text.replace(/[\u064B-\u0652]/gu, "");
 
-  // --- PM tokens ---
+  // PM tokens
   text = text.replace(
     /(^|[\s:،,.\-])بعد\s+ال[ظض]هر(?=$|[\s:،,.\-]|$)/gu,
     "$1 pm "
@@ -132,7 +143,7 @@ function replaceArabicAmPm(text) {
     "$1 pm "
   );
 
-  // --- AM tokens ---
+  // AM tokens
   text = text.replace(
     /(^|[\s:،,.\-])(الصبح|صبح)(?=$|[\s:،,.\-]|$)/gu,
     "$1 am "
@@ -143,7 +154,7 @@ function replaceArabicAmPm(text) {
     "$1 am "
   );
 
-  // --- remove ساعة variants (both ة and ه) ---
+  // remove ساعة variants (both ة and ه)
   text = text.replace(
     /(^|[\s:،,.\-])(الساعة|ساعة|ساعه)(?=$|[\s:،,.\-]|$)/gu,
     " "
@@ -152,51 +163,62 @@ function replaceArabicAmPm(text) {
   return text;
 }
 
-// Fallback normalization for custom logic if Recognizers fails
-function normalizeArabicTime(text) {
-  text = arabicIndicToEnglish(text);
+// =====================================
+// apply your AR maps (days/rel/months)
+// =====================================
+function applyArabicMaps(text) {
+  let t = arabicIndicToEnglish(text);
 
-  // turn final ه → ة using unicode-safe boundary
-  text = text.replace(/ه(?=$|[\s:،,.\-])/gu, "ة");
-
-  // days/relative/month mapping
-  text = text.replace(
-    /ال(جمعة|جمعه|سبت|احد|أحد|اثنين|إثنين|ثلاثاء|اربعاء|أربعاء|خميس)/gu,
-    "$1"
-  );
-  for (const [ar, en] of Object.entries(AR_REL))
-    text = text.replace(new RegExp(ar, "giu"), en);
-  for (const [ar, en] of Object.entries(AR_DAY))
-    text = text.replace(new RegExp(ar, "giu"), en);
-  for (const [ar, en] of Object.entries(AR_MONTH))
-    text = text.replace(new RegExp(ar, "giu"), en);
-  text = text.replace(
-    /ال(friday|saturday|sunday|monday|tuesday|wednesday|thursday)/gi,
-    "$1"
-  );
-
-  // drop filler words (unicode-safe)
-  text = text.replace(/\b(?:على|عال|ال)\b\s*/giu, " ");
-
-  // map Arabic AM/PM + remove ساعة
-  const before = text;
-  text = replaceArabicAmPm(text);
-  // console.log("AMPAM MAP:", before, "→", text);
-
-  // if any Arabic words still remain, drop them (we already mapped days/months)
-  text = text.replace(/[\u0600-\u06FF]+/gu, " ");
-
-  // normalize "h[:mm] am|pm"
-  text = text.replace(
-    /(\d{1,2})(?:\s*[:٫،]\s*(\d{2}))?\s*(am|pm)/gi,
-    (_m, h, min, ap) => `${h}${min ? ":" + min : ""} ${ap}`
-  );
-
-  text = text.replace(/\s+/g, " ").trim();
-  console.log("NORMALIZED STRING SENT TO LUXON:", text);
-  return text;
+  // map relative, weekdays, and months
+  for (const [ar, en] of Object.entries(AR_REL)) {
+    t = t.replace(new RegExp(ar, "giu"), en);
+  }
+  for (const [ar, en] of Object.entries(AR_DAY)) {
+    t = t.replace(new RegExp(ar, "giu"), en);
+  }
+  for (const [ar, en] of Object.entries(AR_MONTH)) {
+    t = t.replace(new RegExp(ar, "giu"), en);
+  }
+  return t;
 }
 
+// =====================================
+// normalization used before parsing
+// =====================================
+function normalizeArabicTime(text) {
+  // maps + am/pm
+  let t = applyArabicMaps(text);
+  t = replaceArabicAmPm(t);
+
+  // remove common fillers (Arabic + English)
+  t = t
+    .replace(
+      /(?:بدي|أ?عدل|تعديل|حاب|حابب|ابغى|التاريخ|تاريخ|ليوم|يوم|الوقت|الساعة|ساعة|إلى|الى|على|عال|ال)/giu,
+      " "
+    )
+    .replace(/\b(of|at|to|for|on|this|coming|the)\b/gi, " ");
+
+  // drop any remaining Arabic words (we already mapped important tokens)
+  t = t.replace(/[\u0600-\u06FF]+/gu, " ");
+
+  // normalize time and spaces
+  t = t
+    .replace(/(\d)(am|pm)\b/gi, "$1 $2")
+    .replace(/(\d{1,2})\s*[:٫،]\s*(\d{2})/g, "$1:$2")
+    .replace(/\b(\d{1,2})(st|nd|rd|th)\b/gi, "$1")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+
+  try {
+    console.log("[DT_PARSE] arabic normalized ->", t);
+  } catch {}
+  return t;
+}
+
+// =====================================
+// cleaning for user-facing Arabic text
+// =====================================
 function cleanArabicForDate(text) {
   return (
     text
@@ -205,7 +227,7 @@ function cleanArabicForDate(text) {
         /(?:بدي|أ?عدل|تعديل|حاب|حابب|ابغى|التاريخ|تاريخ|ليوم|يوم|الوقت|الساعة|ساعة|إلى|الى|على|عال|ال)/g,
         ""
       )
-      // Remove extra spaces
+      // Remove extra spaces and minor fillers
       .replace(/\b(?:اه|آه|ايوه|طيب)\b/gi, "")
       .replace(/\bل\s+/g, " ")
       .replace(/\s+/g, " ")
@@ -213,7 +235,10 @@ function cleanArabicForDate(text) {
   );
 }
 
-// === MICROSOFT RECOGNIZER FOR ARABIC DATES ===
+// =====================================
+// Arabic: first try strict D/M/Y + time
+// then recognizers (ar-sa)
+// =====================================
 function extractArabicDate(text, refDate = new Date(), noRecurse = false) {
   const zone = "Asia/Amman";
   const now = DateTime.fromJSDate(refDate).setZone(zone);
@@ -222,7 +247,7 @@ function extractArabicDate(text, refDate = new Date(), noRecurse = false) {
   let src = arabicIndicToEnglish(text);
   let forTime = replaceArabicAmPm(src);
 
-  // 2) Try explicit D/M(/Y) first (Jordan style)
+  // 2) Try explicit D/M(/Y)
   const dmy = forTime.match(/(\d{1,2})[\/\-\.](\d{1,2})(?:[\/\-\.](\d{2,4}))?/);
   let day = null,
     month = null,
@@ -239,12 +264,11 @@ function extractArabicDate(text, refDate = new Date(), noRecurse = false) {
     minute = 0,
     ap = "";
 
-  // Find the date position, so we can prefer times after it
+  // Date position to prioritize time after the date token
   const dmyRe = /(\d{1,2})[\/\-\.](\d{1,2})(?:[\/\-\.](\d{2,4}))?/g;
   let dmyExec = dmyRe.exec(forTime);
   const afterIdx = dmyExec ? dmyExec.index + dmyExec[0].length : 0;
 
-  // Time regex
   const timeReAll =
     /(?:الساعة|ساعة|ساعه)?\s*(\d{1,2})(?:\s*[:٫،]\s*(\d{2}))?\s*(am|pm)?/gi;
   let best = null;
@@ -269,9 +293,8 @@ function extractArabicDate(text, refDate = new Date(), noRecurse = false) {
       ) {
         best = { ...candidate, after: true, afterHasAp: candidate.hasAp };
       }
-    } else {
-      if (!best)
-        best = { ...candidate, after: false, afterHasAp: candidate.hasAp };
+    } else if (!best) {
+      best = { ...candidate, after: false, afterHasAp: candidate.hasAp };
     }
   }
   if (best) {
@@ -280,7 +303,7 @@ function extractArabicDate(text, refDate = new Date(), noRecurse = false) {
     ap = best.apTok;
   }
 
-  // If we found a D/M date, build the DateTime now.
+  // If D/M date, construct DateTime now.
   if (day != null && month != null) {
     let dt = DateTime.fromObject(
       { year, month, day, hour: 12, minute: 0, second: 0, millisecond: 0 },
@@ -295,37 +318,121 @@ function extractArabicDate(text, refDate = new Date(), noRecurse = false) {
     return dt.toISO();
   }
 
-  // 4) No numeric D/M found — skip recursive fallback if noRecurse flag is set
+  // 4) Microsoft Recognizers (Arabic)
   if (!noRecurse) {
-    // (If you still want a fallback, uncomment the below)
-    // const isoFromFallback = parseJordanDateTime(text, null, "ar");
-    // if (isoFromFallback) return isoFromFallback;
-  }
-
-  // 5) Microsoft Recognizers
-  try {
-    const res = recognizeDateTime(text, "ar-sa", refDate) || [];
-    if (res.length) {
-      const v = res[0].resolution?.values?.[0];
-      if (v?.value) {
-        // If recognizer returned date-only, append time if we captured one above
-        if (/^\d{4}-\d{2}-\d{2}$/.test(v.value) && hour != null) {
-          let dt = DateTime.fromISO(v.value, { zone });
-          let h = hour;
-          if (ap === "pm" && h < 12) h += 12;
-          if (ap === "am" && h === 12) h = 0;
-          dt = dt.set({ hour: h, minute });
-          return dt.toISO();
+    try {
+      const res = recognizeDateTime(text, "ar-sa", refDate) || [];
+      if (res.length) {
+        const v = res[0].resolution?.values?.[0];
+        if (v?.value) {
+          // If recognizer gave date-only and we captured a time, merge them
+          if (/^\d{4}-\d{2}-\d{2}$/.test(v.value) && hour != null) {
+            let dt = DateTime.fromISO(v.value, { zone });
+            let h = hour;
+            if (ap === "pm" && h < 12) h += 12;
+            if (ap === "am" && h === 12) h = 0;
+            dt = dt.set({ hour: h, minute });
+            return dt.toISO();
+          }
+          return DateTime.fromISO(v.value, { zone }).toISO();
         }
-        return DateTime.fromISO(v.value, { zone }).toISO();
       }
-    }
-  } catch (e) {}
+    } catch (e) {}
+  }
 
   return null;
 }
 
-// === MAIN ENTRYPOINT FOR ANY WHATSAPP DATE PARSING ===
+// =====================================
+// Month-word parser using your MONTH_RE
+// e.g. "2 sep 11 am", "2nd of september", "2 sep 2025 11 am"
+// =====================================
+// Month-word regex: match date phrases anywhere in the string
+// Match things like "22 Sep 10 am", "2nd of September", etc. anywhere in the text
+const MONTH_WORD_RE = new RegExp(
+  String.raw`\b(\d{1,2})\s+(?:of\s+)?${MONTH_RE}\b(?:\s+(\d{4}))?(?:\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?\b`,
+  "i"
+);
+
+function tryMonthWordParse(cleaned, existingDt, now, zone = "Asia/Amman") {
+  const m = cleaned.match(MONTH_WORD_RE);
+  if (!m) return null;
+
+  const day = parseInt(m[1], 10);
+  const monToken = (m[2] || "").toLowerCase();
+  const month = EN_MONTH[monToken] || EN_MONTH[monToken.slice(0, 3)] || null;
+  if (!month) return null;
+
+  const hasYear = !!m[3];
+  let year = hasYear ? parseInt(m[3], 10) : now.year;
+
+  let hour, minute;
+  if (m[4]) {
+    hour = parseInt(m[4], 10);
+    minute = m[5] ? parseInt(m[5], 10) : 0;
+    const ap = (m[6] || "").toLowerCase();
+    if (ap === "pm" && hour < 12) hour += 12;
+    if (ap === "am" && hour === 12) hour = 0;
+  } else {
+    // no explicit time → keep existing time or default 11:00
+    hour = existingDt ? existingDt.hour : 11;
+    minute = existingDt ? existingDt.minute : 0;
+  }
+
+  let dt = DateTime.fromObject(
+    { year, month, day, hour, minute, second: 0, millisecond: 0 },
+    { zone }
+  );
+
+  // If year omitted and result is in the past, bump to next year
+  if (!hasYear && dt <= now) dt = dt.plus({ years: 1 });
+
+  const out = dt.toISO();
+  try { console.log("[DT_PARSE] month-word ->", out, { day, month, year, hour, minute }); } catch {}
+  return out;
+}
+
+
+
+// =====================================
+// Nearest upcoming weekday helper
+// =====================================
+function nextWeekdayDate(base, targetWeekday, hour, minute, now) {
+  const h = Number.isFinite(Number(hour)) ? Number(hour) : 11;
+  const m = Number.isFinite(Number(minute)) ? Number(minute) : 0;
+  let candidate = base.set({ hour: h, minute: m, second: 0, millisecond: 0 });
+  let daysAhead = (targetWeekday - base.weekday + 7) % 7;
+  if (daysAhead === 0 && candidate <= now) daysAhead = 7; // if today but time passed → next week
+  return candidate.plus({ days: daysAhead });
+}
+
+// =====================================
+// Jordan day → UTC range helper
+// =====================================
+function getJordanDayUtcRange(localDayIso) {
+  const zone = "Asia/Amman";
+  const startJordan = DateTime.fromISO(localDayIso, { zone }).startOf("day");
+  const endJordan = startJordan.endOf("day");
+  return {
+    start: startJordan.toUTC().toISO({ suppressMilliseconds: true }),
+    end: endJordan.toUTC().toISO({ suppressMilliseconds: true }),
+  };
+}
+
+// =====================================
+// WhatsApp date formatter
+// =====================================
+function formatWhatsAppDate(dt, lang = "en", fmt = "ccc d LLL HH:mm") {
+  if (!dt) return "";
+  let dateObj = typeof dt === "string" ? DateTime.fromISO(dt) : dt;
+  if (!dateObj.isValid) return "";
+  let s = dateObj.setLocale(lang).toFormat(fmt);
+  return lang === "ar" ? toArabicDigits(s) : s;
+}
+
+// =====================================
+// Main parser entry point
+// =====================================
 function parseJordanDateTime(
   userText,
   existingISO = null,
@@ -333,366 +440,237 @@ function parseJordanDateTime(
   skipArabicExtract = false
 ) {
   const jordanZone = "Asia/Amman";
-  let dt;
+  const now = DateTime.now().setZone(jordanZone);
+  const existingDt = existingISO
+    ? DateTime.fromISO(existingISO, { zone: jordanZone })
+    : null;
 
+  try {
+    console.log("[DT_PARSE] raw:", { userText, lang, existingISO });
+  } catch {}
+
+  // Arabic path: first try strict Arabic parsing + recognizer
   if (lang === "ar" || /[\u0600-\u06FF]/.test(userText)) {
-    const iso = extractArabicDate(userText, new Date(), true); // <-- pass true here!
-    if (iso) {
-      return DateTime.fromISO(iso, { zone: jordanZone }).toISO();
+    const refDate = (existingDt || now).toJSDate();
+
+    // strict (no recursion)
+    const isoStrict = extractArabicDate(userText, refDate, true);
+    if (isoStrict) {
+      const out = DateTime.fromISO(isoStrict, { zone: jordanZone }).toISO();
+      try { console.log("[DT_PARSE] ar-strict ->", out); } catch {}
+      return out;
     }
-  }
-  // ---- FIRST TRY: Microsoft Recognizer for Arabic
-  if (
-    (!skipArabicExtract && lang === "ar") ||
-    /[\u0600-\u06FF]/.test(userText)
-  ) {
-    const iso = extractArabicDate(userText);
-    if (iso) {
-      return DateTime.fromISO(iso, { zone: jordanZone }).toISO();
-    }
-    // Otherwise fallback to custom logic below
-  }
 
-  // ---- FALLBACK: Your previous normalization + Luxon logic
-  let cleaned = userText.trim();
-  if (lang === "ar" || /[\u0600-\u06FF]/.test(cleaned)) {
-    cleaned = normalizeArabicTime(cleaned);
-  }
-
-  console.log("DEBUG Normalized:", cleaned);
-  cleaned = cleaned
-    .replace(/(\d)(am|pm)\b/gi, "$1 $2") // 11pm -> 11 pm
-    .replace(/\b(\d{1,2})(st|nd|rd|th)\b/g, "$1")
-    .replace(/\b(of|at|to)\b/gi, " ")
-    .replace(
-      /\b(change(?:\s+it)?(?:\s+to)?|move(?:\s+it)?(?:\s+to)?|set(?:\s+it)?(?:\s+to)?|reschedule|update|modify)\b/gi,
-      " "
-    )
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-  console.log("DEBUG cleaned after rules:", cleaned);
-
-  const hasClock =
-    /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i.test(cleaned) || // 7 pm, 7:15 pm
-    /\b\d{1,2}:\d{2}\b/.test(cleaned); // 19:00
-
-  // Extract first date-like sequence
-
-  const dateLikePattern = new RegExp(
-    "\\b(?:" +
-      "tomorrow|today|day\\s+after\\s+tomorrow|" +
-      "sunday|monday|tuesday|wednesday|thursday|friday|saturday|" +
-      "\\d{1,2}(?:st|nd|rd|th)?(?:\\s+of)?\\s+" +
-      MONTH_RE +
-      "(?:\\s+\\d{4})?|" + // 22 (of) aug
-      MONTH_RE +
-      "\\s+\\d{1,2}(?:st|nd|rd|th)?(?:\\s+\\d{4})?|" + // aug 22
-      "\\d{1,2}[\\/-]\\d{1,2}(?:[\\/-]\\d{2,4})?|" +
-      "\\d{4}-\\d{2}-\\d{2}" +
-      ")" +
-      "(?:\\s*\\d{1,2})?(?::\\d{2})?\\s*(?:am|pm)?",
-    "i"
-  );
-
-  const dateMatch = cleaned.match(dateLikePattern);
-  if (dateMatch) cleaned = dateMatch[0].trim();
-  cleaned = cleaned
-    .replace(/\b(please|kindly|at|on|the)\b/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  // --- Custom Luxon parsing fallback (your old logic, untouched) ---
-  if (/day after tomorrow/.test(cleaned)) {
-    let match = cleaned.match(
-      /day after tomorrow(?:\s*at)?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/
-    );
-    const base = DateTime.now().setZone(jordanZone).plus({ days: 2 });
-    if (match) {
-      let hour = parseInt(match[1]);
-      let minute = match[2] ? parseInt(match[2]) : 0;
-      let ampm = match[3] || "";
-      let final = base.set({ hour, minute, second: 0, millisecond: 0 });
-      if (ampm === "pm" && hour < 12) final = final.set({ hour: hour + 12 });
-      if (ampm === "am" && hour === 12) final = final.set({ hour: 0 });
-      return final.toISO();
-    }
-    return base.set({ hour: 12, minute: 0, second: 0, millisecond: 0 }).toISO();
-  }
-  if (/tomorrow/.test(cleaned)) {
-    let match = cleaned.match(
-      /tomorrow(?:\s*at)?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/
-    );
-    const base = DateTime.now().setZone(jordanZone).plus({ days: 1 });
-    if (match) {
-      let hour = parseInt(match[1]);
-      let minute = match[2] ? parseInt(match[2]) : 0;
-      let ampm = match[3] || "";
-      let final = base.set({ hour, minute, second: 0, millisecond: 0 });
-      if (ampm === "pm" && hour < 12) final = final.set({ hour: hour + 12 });
-      if (ampm === "am" && hour === 12) final = final.set({ hour: 0 });
-      return final.toISO();
-    }
-    return base.set({ hour: 12, minute: 0, second: 0, millisecond: 0 }).toISO();
-  }
-  if (/today/.test(cleaned)) {
-    let match = cleaned.match(
-      /today(?:\s*at)?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/
-    );
-    const base = DateTime.now().setZone(jordanZone);
-    if (match) {
-      let hour = parseInt(match[1]);
-      let minute = match[2] ? parseInt(match[2]) : 0;
-      let ampm = match[3] || "";
-      let final = base.set({ hour, minute, second: 0, millisecond: 0 });
-      if (ampm === "pm" && hour < 12) final = final.set({ hour: hour + 12 });
-      if (ampm === "am" && hour === 12) final = final.set({ hour: 0 });
-      return final.toISO();
-    }
-    return base.set({ hour: 12, minute: 0, second: 0, millisecond: 0 }).toISO();
-  }
-  // Weekday pattern
-  const weekdayMap = {
-    sunday: 7,
-    monday: 1,
-    tuesday: 2,
-    wednesday: 3,
-    thursday: 4,
-    friday: 5,
-    saturday: 6,
-  };
-  const weekdayPattern =
-    /\b(?:next|this)?\s*(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b[\s,]*([0-9]{1,2})(?::([0-9]{2}))?\s*(am|pm)?/;
-  const matchWday = cleaned.match(weekdayPattern);
-  if (matchWday) {
-    const [, weekday, hourStr, minStr, ampm] = matchWday;
-    const now = DateTime.now().setZone(jordanZone);
-    let targetDay = weekdayMap[weekday];
-    let base = now.startOf("day");
-    let currentWeekday = now.weekday;
-    let addDays = (targetDay - currentWeekday + 7) % 7;
-    if (addDays === 0) addDays = 7;
-    let date = base.plus({ days: addDays });
-    let hour = hourStr ? parseInt(hourStr) : 12;
-    let minute = minStr ? parseInt(minStr) : 0;
-    let h = hour;
-    if (ampm === "pm" && hour < 12) h = hour + 12;
-    if (ampm === "am" && hour === 12) h = 0;
-    date = date.set({ hour: h, minute, second: 0, millisecond: 0 });
-    return date.toISO();
-  }
-
-  const wdOnly = cleaned.match(
-    /^(?:next|this)?\s*(sunday|monday|tuesday|wednesday|thursday|friday|saturday)$/i
-  );
-  if (wdOnly) {
-    const weekday = wdOnly[1].toLowerCase();
-    const now = DateTime.now().setZone(jordanZone);
-    const weekdayMap = {
-      sunday: 7,
-      monday: 1,
-      tuesday: 2,
-      wednesday: 3,
-      thursday: 4,
-      friday: 5,
-      saturday: 6,
-    };
-    let targetDay = weekdayMap[weekday];
-    let base = now.startOf("day");
-    let addDays = (targetDay - now.weekday + 7) % 7;
-    if (addDays === 0) addDays = 7;
-
-    let hour = 12,
-      minute = 0;
-    if (existingISO) {
-      const ex = DateTime.fromISO(existingISO, { zone: jordanZone });
-      if (ex.isValid) {
-        hour = ex.hour;
-        minute = ex.minute;
+    // recognizer (unless skipping)
+    if (!skipArabicExtract) {
+      const iso = extractArabicDate(userText, refDate);
+      if (iso) {
+        const out = DateTime.fromISO(iso, { zone: jordanZone }).toISO();
+        try { console.log("[DT_PARSE] ar-recognizer ->", out); } catch {}
+        return out;
       }
     }
-    const date = base
-      .plus({ days: addDays })
-      .set({ hour, minute, second: 0, millisecond: 0 });
-    return date.toISO();
+
+    // normalize Arabic→English tokens for fallback
+    userText = normalizeArabicTime(userText);
   }
-  // Fallback for time only
-  let timeOnlyMatch = cleaned.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
+
+  // Normalize English-ish strings
+  let cleaned = String(userText || "")
+  .trim()
+  .replace(/(\d)(am|pm)\b/gi, "$1 $2")                // 11pm -> 11 pm
+  .replace(/\b(\d{1,2})(st|nd|rd|th)\b/gi, "$1")      // 22nd -> 22
+  .replace(/\b(of|at|to|for|on|this|coming|the)\b/gi, " ")
+  .replace(
+    /\b(change(?:\s+it)?(?:\s+to)?|move(?:\s+it)?(?:\s+to)?|set(?:\s+it)?(?:\s+to)?|reschedule|update|modify)\b/gi,
+    " "
+  )
+  .replace(/\s+/g, " ")
+  .toLowerCase();
+
+  // Normalize common weekday misspellings before anchoring/parsing
+  cleaned = cleaned
+    .replace(/wedenesday|wedensday|wednesay|wendesday|wendsday|wednsday/gi, "wednesday")
+    .replace(/staurday|saterday/gi, "saturday")
+    .replace(/thrusday|thurday/gi, "thursday")
+    .replace(/tusday|tuesdy/gi, "tuesday")
+    .replace(/moday/gi, "monday")
+    .replace(/firday/gi, "friday");
+
+// Anchor to the first meaningful date token (today/tomorrow/weekday) to avoid stripping it
+const anchor = cleaned.match(/\b(today|tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i);
+if (anchor) {
+  const idx = cleaned.indexOf(anchor[0]);
+  if (idx > 0) cleaned = cleaned.slice(idx).trim();
+}
+
+// (optional) pre-strip leading filler words that aren’t dates
+cleaned = cleaned.replace(
+  /^(?!\d)(?!today|tomorrow)(?!sun|mon|tue|wed|thu|fri|sat|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z\s]+/i,
+  ""
+).trim();
+
+
+  try {
+    console.log("[DT_PARSE] cleaned:", cleaned);
+  } catch {}
+
+  // Relative-day parsing: today/tomorrow with optional time (preserve existing time when absent)
+  const relRe = /\b(today|tomorrow)\b(?:\s*(?:at)?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?/i;
+  const relMatch = cleaned.match(relRe);
+  if (relMatch) {
+    const which = relMatch[1].toLowerCase();
+    let base = which === "tomorrow" ? now.plus({ days: 1 }) : now;
+    let hour = existingDt ? existingDt.hour : 11;
+    let minute = existingDt ? existingDt.minute : 0;
+    if (relMatch[2]) {
+      hour = parseInt(relMatch[2], 10);
+      minute = relMatch[3] ? parseInt(relMatch[3], 10) : 0;
+      const ap = (relMatch[4] || "").toLowerCase();
+      if (ap === "pm" && hour < 12) hour += 12;
+      if (ap === "am" && hour === 12) hour = 0;
+    }
+    const out = base.set({ hour, minute, second: 0, millisecond: 0 }).toISO();
+    try { console.log("[DT_PARSE] relative-day ->", out, { which, hour, minute }); } catch {}
+    return out;
+  }
+
+  // A) time-only updates like "11" or "11 am"
+  const timeOnlyMatch = cleaned.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i);
   if (timeOnlyMatch) {
-    let hour = parseInt(timeOnlyMatch[1]);
-    let minute = timeOnlyMatch[2] ? parseInt(timeOnlyMatch[2]) : 0;
-    let ampm = timeOnlyMatch[3] || "";
-    let now = DateTime.now().setZone(jordanZone);
-    let date = now.set({ hour, minute, second: 0, millisecond: 0 });
-    if (ampm === "pm" && hour < 12) date = date.set({ hour: hour + 12 });
-    if (ampm === "am" && hour === 12) date = date.set({ hour: 0 });
-    if (date < now) date = date.plus({ days: 1 });
-    return date.toISO();
+    let hour = parseInt(timeOnlyMatch[1], 10);
+    const minute = timeOnlyMatch[2] ? parseInt(timeOnlyMatch[2], 10) : 0;
+    const ap = (timeOnlyMatch[3] || "").toLowerCase();
+
+    let baseDate = existingDt || now;
+    if (ap === "pm" && hour < 12) hour += 12;
+    if (ap === "am" && hour === 12) hour = 0;
+
+    let finalDt = baseDate.set({ hour, minute, second: 0, millisecond: 0 });
+    if (!existingDt && finalDt < now) {
+      finalDt = finalDt.plus({ days: 1 }); // today in past → tomorrow
+    }
+    const out = finalDt.toISO();
+    try { console.log("[DT_PARSE] time-only ->", out); } catch {}
+    return out;
   }
-  // Try normal date formats
-  const currentYear = DateTime.now().setZone(jordanZone).year;
-  const formats = [
-    "d LLLL yyyy h a",
-    "d LLLL yyyy h:mm a",
-    "d LLLL h a",
-    "d LLLL h:mm a",
-    "d M yyyy h a",
-    "d M yyyy h:mm a",
-    "d M h a",
-    "d M h:mm a",
-    "d M yyyy HH:mm",
-    "d M HH:mm",
-    "cccc d LLLL yyyy h a",
-    "cccc d LLLL h a",
-    "cccc d LLLL h:mm a",
-    "yyyy-MM-dd HH:mm",
-    "yyyy-MM-dd h:mm a",
-    "yyyy-MM-dd h a",
-    "yyyy-MM-dd",
-    "d/M/yyyy h a",
-    "d/M/yyyy h:mm a",
-    "d/M/yyyy",
-    "d/M h a",
-    "d/M h:mm a",
-    "d LLLL", // e.g., 22 august
-    "d LLL",
-    "d LLL h a",
-    "d LLL h:mm a",
-  ];
-  for (const format of formats) {
-    if (!existingISO) {
-      const m = cleaned.match(
-        /^(\d{1,2})(?:st|nd|rd|th)?(?:\s+of)?\s+([a-z]+)(?:\s+(\d{4}))?$/i
-      );
-      if (m) {
-        const day = parseInt(m[1], 10);
-        let rawMonth = m[2].toLowerCase();
-        const year = m[3] ? parseInt(m[3], 10) : currentYear;
 
-        let key = rawMonth;
-        if (!EN_MONTH[key] && key.length > 3) key = key.slice(0, 3);
-        const monthNum = EN_MONTH[key];
-        if (monthNum) {
-          const base = DateTime.fromObject(
-            {
-              year,
-              month: monthNum,
-              day,
-              hour: 12,
-              minute: 0,
-              second: 0,
-              millisecond: 0,
-            },
-            { zone: jordanZone }
-          );
-          return base.toISO();
-        }
-      }
-    }
+  // B) month-word parsing (e.g., "2 sep 11 am", "2nd of september")
+  const monthWordISO = tryMonthWordParse(cleaned, existingDt || now, now, jordanZone);
+  if (monthWordISO) return monthWordISO;
 
-    dt = DateTime.fromFormat(cleaned, format, {
-      zone: jordanZone,
-      locale: "en",
-    });
-
-    if (dt.isValid) {
-      if (!format.includes("yyyy") && !format.includes("y")) {
-        dt = dt.set({ year: currentYear });
-      }
-
-      // ⬇️ NEW: if user didn’t type a clock, don’t return midnight
-      if (!hasClock) {
-        if (existingISO) {
-          const ex = DateTime.fromISO(existingISO, { zone: jordanZone });
-          if (ex.isValid) {
-            dt = dt.set({
-              hour: ex.hour,
-              minute: ex.minute,
-              second: 0,
-              millisecond: 0,
-            });
-          }
-        } else {
-          dt = dt.set({ hour: 12, minute: 0, second: 0, millisecond: 0 });
-        }
-      }
-
-      return dt.toISO();
-    }
-  }
-  dt = DateTime.fromISO(cleaned, { zone: jordanZone });
-  if (dt.isValid) {
-    // ⬇️ NEW: if no clock in text, keep old time or default to 12:00
-    if (!hasClock) {
-      if (existingISO) {
-        const ex = DateTime.fromISO(existingISO, { zone: jordanZone });
-        if (ex.isValid) {
-          dt = dt.set({
-            hour: ex.hour,
-            minute: ex.minute,
-            second: 0,
-            millisecond: 0,
-          });
-        }
-      } else {
-        dt = dt.set({ hour: 12, minute: 0, second: 0, millisecond: 0 });
-      }
-    }
-    return dt.toISO();
-  }
-  // Time only with existing date context
-  if (existingISO) {
-    const existingDt = DateTime.fromISO(existingISO, { zone: jordanZone });
-    let timeMatch = cleaned.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
-    if (timeMatch) {
-      const hour = parseInt(timeMatch[1]);
-      const minute = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
-      const ampm = timeMatch[3] || "";
-      let base = existingDt.set({ hour, minute, second: 0, millisecond: 0 });
-      if (ampm === "pm" && hour < 12) base = base.set({ hour: hour + 12 });
-      if (ampm === "am" && hour === 12) base = base.set({ hour: 0 });
-      return base.toISO();
-    }
-    let dateMatch = cleaned.match(
-      /^(\d{1,2})(?:st|nd|rd|th)?(?:\s+of)?\s+(\w+)(?:\s+(\d{4}))?$/i
+  // C) Weekday (+ optional time) e.g., "wednesday", "wed 11 am"
+  const wdNames =
+    "(sun(?:day)?|mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:rs|rsday)?|fri(?:day)?|sat(?:urday)?)";
+    const wdTimeRe = new RegExp(
+      `\\b(?:next\\s+|this\\s+|coming\\s+)?${wdNames}\\b(?:\\s+at)?\\s+(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?`,
+      "i"
     );
-    if (dateMatch) {
-      const day = parseInt(dateMatch[1], 10);
-      const rawMonth = dateMatch[2].toLowerCase();
-      const year = dateMatch[3] ? parseInt(dateMatch[3], 10) : currentYear;
+    const wdOnlyRe = new RegExp(
+      `\\b(?:next\\s+|this\\s+|coming\\s+)?${wdNames}\\b`,
+      "i"
+    );
 
-      let key = rawMonth;
-      if (!EN_MONTH[key] && key.length > 3) key = key.slice(0, 3);
-      const monthNum = EN_MONTH[key];
-      if (monthNum) {
-        const existingDt = DateTime.fromISO(existingISO, { zone: jordanZone });
-        const base = existingDt.set({ year, month: monthNum, day });
-        return base.toISO();
+  const weekdayToNum = {
+    sunday: 7,
+    sun: 7,
+    monday: 1,
+    mon: 1,
+    tuesday: 2,
+    tue: 2,
+    tues: 2,
+    wednesday: 3,
+    wed: 3,
+    thursday: 4,
+    thu: 4,
+    thur: 4,
+    thurs: 4,
+    friday: 5,
+    fri: 5,
+    saturday: 6,
+    sat: 6,
+  };
+
+  let m = cleaned.match(wdTimeRe);
+  if (m) {
+    const wdRaw = m[0].match(new RegExp(wdNames, "i"))?.[0] || "";
+    const wdKey = wdRaw.toLowerCase();
+    const targetWeekday =
+      weekdayToNum[wdKey] ?? weekdayToNum[wdKey.slice(0, 3)];
+
+    let hour = parseInt(m[1], 10);
+    const minute = m[2] ? parseInt(m[2], 10) : 0;
+    const ap = (m[3] || "").toLowerCase();
+    if (ap === "pm" && hour < 12) hour += 12;
+    if (ap === "am" && hour === 12) hour = 0;
+
+    const finalDt = nextWeekdayDate(existingDt || now, targetWeekday, hour, minute, now);
+    const out = finalDt.toISO();
+    try { console.log("[DT_PARSE] weekday+time ->", out); } catch {}
+    return out;
+  }
+
+  m = cleaned.match(wdOnlyRe);
+  if (m) {
+    const wdRaw = m[0].match(new RegExp(wdNames, "i"))?.[0] || "";
+    const wdKey = wdRaw.toLowerCase();
+    const targetWeekday =
+      weekdayToNum[wdKey] ?? weekdayToNum[wdKey.slice(0, 3)];
+
+    const hour = existingDt ? existingDt.hour : 11;
+    const minute = existingDt ? existingDt.minute : 0;
+
+    const finalDt = nextWeekdayDate(existingDt || now, targetWeekday, hour, minute, now);
+    const out = finalDt.toISO();
+    try { console.log("[DT_PARSE] weekday-only ->", out); } catch {}
+    return out;
+  }
+
+  // D) Luxon formats (fallback). If no explicit year, Luxon uses current year.
+  const hasYear = /\b\d{4}\b/.test(cleaned);
+  const formats = [
+    "d MMMM yyyy h:mm a", "d MMM yyyy h:mm a", "d/M/yyyy h:mm a",
+    "d MMMM yyyy h a",   "d MMM yyyy h a",   "d/M/yyyy h a",
+    "d MMMM h:mm a",     "d MMM h:mm a",     "d/M h:mm a",
+    "d MMMM h a",        "d MMM h a",        "d/M h a",
+    "cccc h:mm a",       "cccc h a",
+    "d MMMM yyyy",       "d MMM yyyy",       "d/M/yyyy",
+    "d MMMM",            "d MMM",            "d/M",
+  ];
+
+  for (const format of formats) {
+    let dt = DateTime.fromFormat(cleaned, format, { zone: jordanZone });
+    if (!dt.isValid) continue;
+
+    let finalDt = dt;
+
+    // If format didn't include 'y' and user didn't provide a year,
+    // keep current year but avoid past dates by bumping to next year.
+    if (!hasYear && !format.includes("y")) {
+      finalDt = finalDt.set({ year: now.year });
+      if (finalDt <= now) {
+        finalDt = finalDt.plus({ years: 1 });
       }
     }
+
+    // If no time component in the input, preserve existing time if present
+    const hasTimeComponent = /[ap]m|\d:\d{2}/.test(cleaned);
+    if (!hasTimeComponent && existingDt) {
+      finalDt = finalDt.set({
+        hour: existingDt.hour,
+        minute: existingDt.minute,
+        second: 0,
+        millisecond: 0,
+      });
+    }
+
+    const out = finalDt.toISO();
+    try { console.log("[DT_PARSE] luxon-format ->", out, { format }); } catch {}
+    return out;
   }
+
+  try { console.log("[DT_PARSE] no match -> null"); } catch {}
   return null;
-}
-
-function getJordanDayUtcRange(localDayIso) {
-  const zone = "Asia/Amman";
-  const startJordan = DateTime.fromISO(localDayIso, { zone }).startOf("day");
-  const endJordan = startJordan.endOf("day");
-  const startUtc = startJordan.toUTC();
-  const endUtc = endJordan.toUTC();
-  return {
-    start: startUtc.toISO({ suppressMilliseconds: true }),
-    end: endUtc.toISO({ suppressMilliseconds: true }),
-  };
-}
-
-function formatWhatsAppDate(dt, lang = "en", fmt = "ccc d LLL HH:mm") {
-  if (!dt) return "";
-  let dateObj = typeof dt === "string" ? DateTime.fromISO(dt) : dt;
-  if (!dateObj.isValid) return "";
-  let s = dateObj.setLocale(lang).toFormat(fmt);
-  if (lang === "ar") return toArabicDigits(s);
-  return s;
 }
 
 module.exports = {
