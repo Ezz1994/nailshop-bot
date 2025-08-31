@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useToast } from "@/hooks/use-toast";
 
 interface Service {
   service_id: string;
@@ -40,6 +41,7 @@ const WalkinModal = ({ isOpen, onClose, onSubmit }: WalkinModalProps) => {
   const [startTime, setStartTime] = useState("");
   const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
+  const { toast } = useToast();
 
   // Fetch all services when modal opens
   useEffect(() => {
@@ -92,8 +94,55 @@ const WalkinModal = ({ isOpen, onClose, onSubmit }: WalkinModalProps) => {
     if (!startTime || selectedServices.length === 0) return;
 
     try {
+      const toAmmanISO = (local: string) => {
+        const d = new Date(local);
+        const pad = (n: number) => String(n).padStart(2, "0");
+        const y = d.getFullYear();
+        const m = pad(d.getMonth() + 1);
+        const da = pad(d.getDate());
+        const hh = pad(d.getHours());
+        const mm = pad(d.getMinutes());
+        return `${y}-${m}-${da}T${hh}:${mm}:00.000+03:00`;
+      };
+
+      const startISO = toAmmanISO(startTime);
+      const durationMin = totalDuration > 0 ? totalDuration : 45;
+
+      // Validate availability before creating
+      const vres = await http.get("/availability/check", {
+        params: { start: startISO, durationMin },
+      });
+      const v = vres.data as {
+        ok: boolean;
+        reason?: string;
+        message?: string;
+        window?: { open: string; close: string } | null;
+        currentConcurrent?: number;
+        maxConcurrent?: number;
+      };
+
+      if (!v.ok) {
+        if (v.reason === "capacity" && v.maxConcurrent != null) {
+          toast({
+            title: "Validation",
+            description: `This time exceeds the maximum concurrent bookings. Max concurrent: ${v.maxConcurrent}.`,
+            variant: "destructive",
+            duration: 4000,
+          });
+        } else {
+          const windowTxt = v.window ? ` (Hours: ${v.window.open}–${v.window.close})` : "";
+          toast({
+            title: "Validation",
+            description: `${v.message || "Not available."}${windowTxt}`,
+            variant: "destructive",
+            duration: 4000,
+          });
+        }
+        return;
+      }
+
       await http.post("/bookings", {
-        start_at: new Date(startTime).toISOString(),
+        start_at: startISO,
         service_ids: selectedServices,
         customer_phone: phone || null,
         customer_name: "",
@@ -105,8 +154,14 @@ const WalkinModal = ({ isOpen, onClose, onSubmit }: WalkinModalProps) => {
       });
       handleClose();
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error("Failed to create booking", err);
-      // TODO: show toast
+      toast({
+        title: "Error",
+        description: message || "Failed to create booking",
+        variant: "destructive",
+        duration: 4000,
+      });
     }
   };
 

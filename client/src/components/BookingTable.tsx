@@ -110,6 +110,15 @@ const BookingTable = ({ selectedDate }: BookingTableProps) => {
 
   const [refreshKey, setRefreshKey] = useState(0);
 
+  // Force a lightweight re-render periodically so header date updates at Jordan midnight
+  const [, forceRerender] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => {
+      forceRerender((v) => v + 1);
+    }, 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   // Fetch bookings
   useEffect(() => {
     setLoading(true);
@@ -224,7 +233,8 @@ const BookingTable = ({ selectedDate }: BookingTableProps) => {
           <h2 className="text-3xl font-bold text-gray-900">Today's Bookings</h2>
           <div className="flex items-center text-sm text-gray-600">
             <CalendarIcon className="w-4 h-4 mr-1" />
-            {new Date(selectedDate).toLocaleDateString("en-US", {
+            {new Date().toLocaleDateString("en-US", {
+              timeZone: "Asia/Amman",
               weekday: "long",
               year: "numeric",
               month: "long",

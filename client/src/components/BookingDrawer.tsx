@@ -21,6 +21,7 @@ import { Edit, Save } from "lucide-react";
 import { DateTime } from "luxon";
 import { http } from "@/lib/http";     // ✅ authenticated axios client
 import axios from "axios";             // for axios.isCancel
+import { useToast } from "@/hooks/use-toast";
 
 interface BookingDrawerProps {
   booking: Booking | null;
@@ -74,6 +75,7 @@ const BookingDrawer = ({
   }, []);
 
   if (!booking) return null;
+  const { toast } = useToast();
 
   const handleEditClick = () => {
     setIsEditing(true);
@@ -87,22 +89,57 @@ const BookingDrawer = ({
       const formatAsAmmanISO = (localDateTimeString: string) => {
         if (!localDateTimeString) return null;
         const d = new Date(localDateTimeString);
-        const dt = DateTime.fromJSDate(d, { zone: "local" });
-        const amman = DateTime.fromObject(
-          {
-            year: dt.year, month: dt.month, day: dt.day,
-            hour: dt.hour, minute: dt.minute, second: dt.second, millisecond: dt.millisecond,
-          },
-          { zone: "Asia/Amman" }
-        );
-        return amman.toISO();
+        const pad = (n: number) => String(n).padStart(2, "0");
+        const iso = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00.000+03:00`;
+        return iso;
       };
 
       const servicesChanged =
         JSON.stringify(booking.services) !== JSON.stringify(editedBooking.services);
 
+      // Validate against business hours + concurrency (exclude this booking id)
+      const newStartISO = formatAsAmmanISO(editedBooking.start_at || booking.start_at) as string;
+      const computedDuration =
+        (editedBooking.services || []).reduce((sum, s) => sum + (s.duration_min || 0), 0) ||
+        editedBooking.total_duration ||
+        45;
+
+      try {
+        const { data: v } = await http.get("/availability/check", {
+          params: { start: newStartISO, durationMin: computedDuration, excludeId: booking.id },
+        });
+        if (!v.ok) {
+          if (v.reason === "capacity" && v.maxConcurrent != null) {
+            toast({
+              title: "Validation",
+              description: `This time exceeds the maximum concurrent bookings. Max concurrent: ${v.maxConcurrent}.`,
+              variant: "destructive",
+              duration: 4000,
+            });
+          } else {
+            const windowTxt = v.window ? ` (Hours: ${v.window.open}–${v.window.close})` : "";
+            toast({
+              title: "Validation",
+              description: `${v.message || "Not available."}${windowTxt}`,
+              variant: "destructive",
+              duration: 4000,
+            });
+          }
+          return;
+        }
+      } catch (e) {
+        console.error("Validation failed", e);
+        toast({
+          title: "Error",
+          description: "Failed to validate availability",
+          variant: "destructive",
+          duration: 4000,
+        });
+        return;
+      }
+
       const payload: Record<string, unknown> = {
-        start_at: formatAsAmmanISO(editedBooking.start_at),
+        start_at: newStartISO,
         end_at: formatAsAmmanISO(editedBooking.end_at),
         phone: editedBooking.customer_phone,
         notes: editedBooking.notes,
@@ -121,7 +158,12 @@ const BookingDrawer = ({
       setIsEditing(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      alert("Failed to update booking: " + message);
+      toast({
+        title: "Error",
+        description: message || "Failed to update booking",
+        variant: "destructive",
+        duration: 4000,
+      });
     }
   };
 
