@@ -132,7 +132,9 @@ function joinServiceNames(services = [], lang = "en") {
 function parseMonthWordFallback(text, existingISO = null) {
   const jordanZone = TIME_ZONE;
   const now = DateTime.now().setZone(jordanZone);
-  const existingDt = existingISO ? DateTime.fromISO(existingISO, { zone: jordanZone }) : null;
+  const existingDt = existingISO
+    ? DateTime.fromISO(existingISO, { zone: jordanZone })
+    : null;
 
   let cleaned = String(text || "")
     .toLowerCase()
@@ -141,24 +143,38 @@ function parseMonthWordFallback(text, existingISO = null) {
     .replace(/\s+/g, " ")
     .trim();
 
-  const m = cleaned.match(/(\d{1,2})\s+(?:of\s+)?([a-z]+)(?:\s+(\d{4}))?(?:\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?/i);
+  const m = cleaned.match(
+    /(\d{1,2})\s+(?:of\s+)?([a-z]+)(?:\s+(\d{4}))?(?:\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?/i
+  );
   if (!m) return null;
 
   const day = parseInt(m[1], 10);
   const rawMonth = (m[2] || "").toLowerCase();
   const EN_MONTH = {
-    jan: 1, january: 1,
-    feb: 2, february: 2,
-    mar: 3, march: 3,
-    apr: 4, april: 4,
+    jan: 1,
+    january: 1,
+    feb: 2,
+    february: 2,
+    mar: 3,
+    march: 3,
+    apr: 4,
+    april: 4,
     may: 5,
-    jun: 6, june: 6,
-    jul: 7, july: 7,
-    aug: 8, august: 8,
-    sep: 9, sept: 9, september: 9,
-    oct: 10, october: 10,
-    nov: 11, november: 11,
-    dec: 12, december: 12,
+    jun: 6,
+    june: 6,
+    jul: 7,
+    july: 7,
+    aug: 8,
+    august: 8,
+    sep: 9,
+    sept: 9,
+    september: 9,
+    oct: 10,
+    october: 10,
+    nov: 11,
+    november: 11,
+    dec: 12,
+    december: 12,
   };
   let key = rawMonth;
   if (!EN_MONTH[key] && key.length > 3) key = key.slice(0, 3);
@@ -527,7 +543,9 @@ async function guardMaxConcurrent(
           isWithinBusinessHours(candISO, durationMin) &&
           candDT.hasSame(center, "day");
         if (!withinBH) continue;
-        const cur = await countConcurrentAt(candISO, durationMin, { excludeId });
+        const cur = await countConcurrentAt(candISO, durationMin, {
+          excludeId,
+        });
         if (
           !Number.isFinite(MAX_CONCURRENT) ||
           MAX_CONCURRENT < 1 ||
@@ -692,6 +710,26 @@ async function sendWhatsAppBookingUpdate(phone, booking, lang = "en") {
 
 // --- Multi-language message templates for chatbot replies ---
 const BOT_MESSAGES = {
+  firstTimeWelcomeGuide: {
+    en: `Welcome! 👋 I'm your assistant.
+Type "I want to book" to start a new booking.
+Type "I want to update" to modify an existing booking.
+Type "I want to cancel" to cancel a booking.
+
+مرحبًا! 👋 أنا مساعدك.
+إذا كتبت «أريد الحجز» سيبدأ الحجز.
+إذا كتبت «أريد التحديث» سيبدأ التحديث.
+إذا كتبت «أريد الإلغاء» سيبدأ الإلغاء.`,
+    ar: `Welcome! 👋 I'm your assistant.
+Type "I want to book" to start a new booking.
+Type "I want to update" to modify an existing booking.
+Type "I want to cancel" to cancel a booking.
+
+مرحبًا! 👋 أنا مساعدك.
+إذا كتبت «أريد الحجز» سيبدأ الحجز.
+إذا كتبت «أريد التحديث» سيبدأ التحديث.
+إذا كتبت «أريد الإلغاء» سيبدأ الإلغاء.`,
+  },
   fallback: {
     en: "Sorry, I'm not sure how to help with that yet.",
     ar: "آسف، مش متأكد كيف أقدر أساعدك بهالشغلة.",
@@ -768,7 +806,7 @@ const BOT_MESSAGES = {
       `لقيت حجز واحد: ${svcNames} يوم ${when}. بدك تلغيه؟ (نعم / لا)`,
   },
   askName: {
-    en: "Hi! I don't have your name yet — what should I call you?",
+    en: "I don't have your name yet — what should I call you?",
     ar: "مرحباً! لسه ما عندي اسمك — شو اسمك الكريم؟",
   },
   thanksNamePersonal: {
@@ -903,8 +941,31 @@ async function handleIncomingMessage(req, res) {
     } catch {}
   }
 
-  // 2) If still unknown and not already asking → ask once and stash the original message
+  // 2) If still unknown and not already asking → show welcome guide first, then ask for name
   if (!customerRow && !cache.get(awaitingKey)) {
+    // Check if this is the very first time this user is interacting
+    const welcomeSentKey = `${fromPhone}-welcomeSent`;
+    if (!cache.get(welcomeSentKey)) {
+      // Mark welcome as sent to avoid showing it again
+      cache.set(welcomeSentKey, true);
+
+      // Send welcome guide message first
+      let welcomeMsg = BOT_MESSAGES.firstTimeWelcomeGuide[userLang];
+      if (userLang === "ar") welcomeMsg = toArabicDigits(welcomeMsg);
+
+      // Set up name asking flow
+      cache.set(awaitingKey, true);
+      cache.set(resumeKey, incomingMsg);
+
+      let ask = BOT_MESSAGES.askName[userLang];
+      if (userLang === "ar") ask = toArabicDigits(ask);
+
+      // Combine welcome + name ask in single message
+      const combinedMsg = `${welcomeMsg}\n\n${ask}`;
+      return sendReply(res, combinedMsg);
+    }
+
+    // If welcome was already sent but still no customer, just ask for name
     cache.set(awaitingKey, true);
     cache.set(resumeKey, incomingMsg);
 
@@ -1234,10 +1295,15 @@ async function handleIncomingMessage(req, res) {
         const removeTokens = chosenNames.map(normTok).filter(Boolean);
         let stripped = stripPunc(cleaned);
         for (const tok of removeTokens) {
-          if (tok) stripped = stripped.replace(tok, " ").replace(/\s+/g, " ").trim();
+          if (tok)
+            stripped = stripped.replace(tok, " ").replace(/\s+/g, " ").trim();
         }
         if (stripped) {
-          const reparsed = parseJordanDateTime(stripped, existingBooking.start_at, userLang);
+          const reparsed = parseJordanDateTime(
+            stripped,
+            existingBooking.start_at,
+            userLang
+          );
           if (reparsed) {
             newISO = reparsed;
             updateFields.newStartISO = newISO;
@@ -1263,9 +1329,11 @@ async function handleIncomingMessage(req, res) {
                   return nn === nmEn || nn === nmAr;
                 });
               })
-            : (Array.isArray(existingBooking?.services) ? existingBooking.services : []);
+            : Array.isArray(existingBooking?.services)
+            ? existingBooking.services
+            : [];
           const svcTotal = baseList.reduce((sum, s) => {
-            const d = (s.duration_min ?? s.service?.duration_min) ?? 0;
+            const d = s.duration_min ?? s.service?.duration_min ?? 0;
             const n = Number(d);
             return sum + (Number.isFinite(n) ? n : 0);
           }, 0);
@@ -1370,7 +1438,8 @@ async function handleIncomingMessage(req, res) {
               cache.delete(`${fromPhone}-mode`);
               clearSelection(fromPhone);
               const newTime = formatWhatsAppDate(suggestISO, userLang);
-              let msg = BOT_MESSAGES.updatePrefix[userLang] +
+              let msg =
+                BOT_MESSAGES.updatePrefix[userLang] +
                 BOT_MESSAGES.updateNewTime[userLang](newTime) +
                 BOT_MESSAGES.anythingElse[userLang];
               if (userLang === "ar") msg = toArabicDigits(msg);
@@ -1476,11 +1545,18 @@ async function handleIncomingMessage(req, res) {
 
   // --- Numeric selection for update/cancel ---
   const pending = cache.get(fromPhone);
-  if (pending && pending.length > 1) {
+  const modeForPick = cache.get(`${fromPhone}-mode`);
+
+  // UPDATE: allow picking even if only 1 item (explicit selection required)
+  // CANCEL: keep old behavior (only list-pick when multiple)
+  const allowPick =
+    (modeForPick === "update" && pending && pending.length >= 1) ||
+    (modeForPick === "cancel" && pending && pending.length > 1);
+
+  if (allowPick) {
     const idx = parseInt(toEnglishDigits(incomingMsg.trim()), 10);
     if (!isNaN(idx) && idx >= 1 && idx <= pending.length) {
-      const mode = cache.get(`${fromPhone}-mode`);
-      if (mode === "update") {
+      if (modeForPick === "update") {
         cache.set(fromPhone, [pending[idx - 1]]);
         markSelected(fromPhone);
         const twiml = new twilio.twiml.MessagingResponse();
@@ -1756,6 +1832,7 @@ ${menuText}
     }
 
     // --- GPT functionCall: list_my_bookings ---
+    // --- GPT functionCall: list_my_bookings ---
     if (name === "list_my_bookings") {
       const rows = await upcomingBookings(fromPhone);
 
@@ -1765,18 +1842,41 @@ ${menuText}
         return res.type("text/xml").send(twiml.toString());
       }
 
+      const modeForList = cache.get(`${fromPhone}-mode`) || "cancel";
+
+      // ✅ UPDATE: always show selection list (even if only one item). Do NOT auto-select.
+      if (modeForList === "update") {
+        // Save ALL IDs (even single) so the user must pick explicitly by number.
+        cache.set(
+          fromPhone,
+          rows.map((r) => r.id)
+        );
+
+        const listTxt = rows
+          .map((r, i) => {
+            const when = formatWhatsAppDate(r.start_at, userLang);
+            const svcNames = joinServiceNames(r.services, userLang);
+            let line = `${i + 1}️⃣ ${svcNames} – ${when}`;
+            if (userLang === "ar") line = toArabicDigits(line);
+            return line;
+          })
+          .join("\n");
+
+        let reply = BOT_MESSAGES.whichBookingToUpdate[userLang](listTxt);
+        if (userLang === "ar") reply = toArabicDigits(reply);
+
+        const twiml = new twilio.twiml.MessagingResponse();
+        twiml.message(reply);
+        return res.type("text/xml").send(twiml.toString());
+      }
+
+      // 🟨 CANCEL: keep existing UX (auto-confirm if exactly one)
       if (rows.length === 1) {
         cache.set(fromPhone, [rows[0].id]);
-        const mode = cache.get(`${fromPhone}-mode`) || "cancel";
-
         const svcNames = joinServiceNames(rows[0].services, userLang);
         const when = formatWhatsAppDate(rows[0].start_at, userLang);
 
-        let msg =
-          mode === "update"
-            ? BOT_MESSAGES.foundOneUpdate[userLang](svcNames, when)
-            : BOT_MESSAGES.foundOneCancel[userLang](svcNames, when);
-
+        let msg = BOT_MESSAGES.foundOneCancel[userLang](svcNames, when);
         if (userLang === "ar") msg = toArabicDigits(msg);
 
         const twiml = new twilio.twiml.MessagingResponse();
@@ -1784,12 +1884,11 @@ ${menuText}
         return res.type("text/xml").send(twiml.toString());
       }
 
+      // CANCEL with multiple: list & ask
       cache.set(
         fromPhone,
         rows.map((r) => r.id)
       );
-      const mode = cache.get(`${fromPhone}-mode`) || "cancel";
-      const action = mode === "update" ? "update" : "cancel";
 
       const listTxt = rows
         .map((r, i) => {
@@ -1801,11 +1900,7 @@ ${menuText}
         })
         .join("\n");
 
-      let reply =
-        action === "update"
-          ? BOT_MESSAGES.whichBookingToUpdate[userLang](listTxt)
-          : BOT_MESSAGES.whichBookingToCancel[userLang](listTxt);
-
+      let reply = BOT_MESSAGES.whichBookingToCancel[userLang](listTxt);
       if (userLang === "ar") reply = toArabicDigits(reply);
 
       const twiml = new twilio.twiml.MessagingResponse();
@@ -1900,10 +1995,15 @@ ${menuText}
           .filter(Boolean);
         let stripped = stripPunc(incomingMsg);
         for (const tok of removeTokens) {
-          if (tok) stripped = stripped.replace(tok, " ").replace(/\s+/g, " ").trim();
+          if (tok)
+            stripped = stripped.replace(tok, " ").replace(/\s+/g, " ").trim();
         }
         if (stripped) {
-          const reparsed = parseJordanDateTime(stripped, existingBooking.start_at, userLang);
+          const reparsed = parseJordanDateTime(
+            stripped,
+            existingBooking.start_at,
+            userLang
+          );
           if (reparsed) newISO = reparsed;
         }
       }
@@ -1929,11 +2029,14 @@ ${menuText}
       if (updateFields.newStartISO || updateFields.newServices) {
         if (newISO) {
           // Use duration of matched services if provided; otherwise fall back to existing booking services
-          const baseList = matchedServices.length > 0
-            ? matchedServices
-            : (Array.isArray(existingBooking?.services) ? existingBooking.services : []);
+          const baseList =
+            matchedServices.length > 0
+              ? matchedServices
+              : Array.isArray(existingBooking?.services)
+              ? existingBooking.services
+              : [];
           const svcTotal = baseList.reduce((sum, s) => {
-            const d = (s.duration_min ?? s.service?.duration_min) ?? 0;
+            const d = s.duration_min ?? s.service?.duration_min ?? 0;
             const n = Number(d);
             return sum + (Number.isFinite(n) ? n : 0);
           }, 0);

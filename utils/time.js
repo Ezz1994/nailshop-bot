@@ -74,7 +74,6 @@ const AR_MONTH = {
 const MONTH_RE =
   "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
 
-
 const EN_MONTH = {
   jan: 1,
   january: 1,
@@ -388,11 +387,17 @@ function tryMonthWordParse(cleaned, existingDt, now, zone = "Asia/Amman") {
   if (!hasYear && dt <= now) dt = dt.plus({ years: 1 });
 
   const out = dt.toISO();
-  try { console.log("[DT_PARSE] month-word ->", out, { day, month, year, hour, minute }); } catch {}
+  try {
+    console.log("[DT_PARSE] month-word ->", out, {
+      day,
+      month,
+      year,
+      hour,
+      minute,
+    });
+  } catch {}
   return out;
 }
-
-
 
 // =====================================
 // Nearest upcoming weekday helper
@@ -457,7 +462,9 @@ function parseJordanDateTime(
     const isoStrict = extractArabicDate(userText, refDate, true);
     if (isoStrict) {
       const out = DateTime.fromISO(isoStrict, { zone: jordanZone }).toISO();
-      try { console.log("[DT_PARSE] ar-strict ->", out); } catch {}
+      try {
+        console.log("[DT_PARSE] ar-strict ->", out);
+      } catch {}
       return out;
     }
 
@@ -466,7 +473,9 @@ function parseJordanDateTime(
       const iso = extractArabicDate(userText, refDate);
       if (iso) {
         const out = DateTime.fromISO(iso, { zone: jordanZone }).toISO();
-        try { console.log("[DT_PARSE] ar-recognizer ->", out); } catch {}
+        try {
+          console.log("[DT_PARSE] ar-recognizer ->", out);
+        } catch {}
         return out;
       }
     }
@@ -477,46 +486,53 @@ function parseJordanDateTime(
 
   // Normalize English-ish strings
   let cleaned = String(userText || "")
-  .trim()
-  .replace(/(\d)(am|pm)\b/gi, "$1 $2")                // 11pm -> 11 pm
-  .replace(/\b(\d{1,2})(st|nd|rd|th)\b/gi, "$1")      // 22nd -> 22
-  .replace(/\b(of|at|to|for|on|this|coming|the)\b/gi, " ")
-  .replace(
-    /\b(change(?:\s+it)?(?:\s+to)?|move(?:\s+it)?(?:\s+to)?|set(?:\s+it)?(?:\s+to)?|reschedule|update|modify)\b/gi,
-    " "
-  )
-  .replace(/\s+/g, " ")
-  .toLowerCase();
+    .trim()
+    .replace(/(\d)(am|pm)\b/gi, "$1 $2") // 11pm -> 11 pm
+    .replace(/\b(\d{1,2})(st|nd|rd|th)\b/gi, "$1") // 22nd -> 22
+    .replace(/\b(of|at|to|for|on|this|coming|the)\b/gi, " ")
+    .replace(
+      /\b(change(?:\s+it)?(?:\s+to)?|move(?:\s+it)?(?:\s+to)?|set(?:\s+it)?(?:\s+to)?|reschedule|update|modify)\b/gi,
+      " "
+    )
+    .replace(/\s+/g, " ")
+    .toLowerCase();
 
   // Normalize common weekday misspellings before anchoring/parsing
   cleaned = cleaned
-    .replace(/wedenesday|wedensday|wednesay|wendesday|wendsday|wednsday/gi, "wednesday")
+    .replace(
+      /wedenesday|wedensday|wednesay|wendesday|wendsday|wednsday/gi,
+      "wednesday"
+    )
     .replace(/staurday|saterday/gi, "saturday")
     .replace(/thrusday|thurday/gi, "thursday")
     .replace(/tusday|tuesdy/gi, "tuesday")
     .replace(/moday/gi, "monday")
     .replace(/firday/gi, "friday");
 
-// Anchor to the first meaningful date token (today/tomorrow/weekday) to avoid stripping it
-const anchor = cleaned.match(/\b(today|tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i);
-if (anchor) {
-  const idx = cleaned.indexOf(anchor[0]);
-  if (idx > 0) cleaned = cleaned.slice(idx).trim();
-}
+  // Anchor to the first meaningful date token (today/tomorrow/weekday) to avoid stripping it
+  const anchor = cleaned.match(
+    /\b(today|tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i
+  );
+  if (anchor) {
+    const idx = cleaned.indexOf(anchor[0]);
+    if (idx > 0) cleaned = cleaned.slice(idx).trim();
+  }
 
-// (optional) pre-strip leading filler words that aren’t dates
-cleaned = cleaned.replace(
-  /^(?!\d)(?!today|tomorrow)(?!sun|mon|tue|wed|thu|fri|sat|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z\s]+/i,
-  ""
-).trim();
-
+  // (optional) pre-strip leading filler words that aren’t dates
+  cleaned = cleaned
+    .replace(
+      /^(?!\d)(?!today|tomorrow)(?!sun|mon|tue|wed|thu|fri|sat|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z\s]+/i,
+      ""
+    )
+    .trim();
 
   try {
     console.log("[DT_PARSE] cleaned:", cleaned);
   } catch {}
 
   // Relative-day parsing: today/tomorrow with optional time (preserve existing time when absent)
-  const relRe = /\b(today|tomorrow)\b(?:\s*(?:at)?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?/i;
+  const relRe =
+    /\b(today|tomorrow)\b(?:\s*(?:at)?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?/i;
   const relMatch = cleaned.match(relRe);
   if (relMatch) {
     const which = relMatch[1].toLowerCase();
@@ -531,7 +547,9 @@ cleaned = cleaned.replace(
       if (ap === "am" && hour === 12) hour = 0;
     }
     const out = base.set({ hour, minute, second: 0, millisecond: 0 }).toISO();
-    try { console.log("[DT_PARSE] relative-day ->", out, { which, hour, minute }); } catch {}
+    try {
+      console.log("[DT_PARSE] relative-day ->", out, { which, hour, minute });
+    } catch {}
     return out;
   }
 
@@ -551,25 +569,32 @@ cleaned = cleaned.replace(
       finalDt = finalDt.plus({ days: 1 }); // today in past → tomorrow
     }
     const out = finalDt.toISO();
-    try { console.log("[DT_PARSE] time-only ->", out); } catch {}
+    try {
+      console.log("[DT_PARSE] time-only ->", out);
+    } catch {}
     return out;
   }
 
   // B) month-word parsing (e.g., "2 sep 11 am", "2nd of september")
-  const monthWordISO = tryMonthWordParse(cleaned, existingDt || now, now, jordanZone);
+  const monthWordISO = tryMonthWordParse(
+    cleaned,
+    existingDt || now,
+    now,
+    jordanZone
+  );
   if (monthWordISO) return monthWordISO;
 
   // C) Weekday (+ optional time) e.g., "wednesday", "wed 11 am"
   const wdNames =
     "(sun(?:day)?|mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:rs|rsday)?|fri(?:day)?|sat(?:urday)?)";
-    const wdTimeRe = new RegExp(
-      `\\b(?:next\\s+|this\\s+|coming\\s+)?${wdNames}\\b(?:\\s+at)?\\s+(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?`,
-      "i"
-    );
-    const wdOnlyRe = new RegExp(
-      `\\b(?:next\\s+|this\\s+|coming\\s+)?${wdNames}\\b`,
-      "i"
-    );
+  const wdTimeRe = new RegExp(
+    `\\b(?:next\\s+|this\\s+|coming\\s+)?${wdNames}\\b(?:\\s+at)?\\s+(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?`,
+    "i"
+  );
+  const wdOnlyRe = new RegExp(
+    `\\b(?:next\\s+|this\\s+|coming\\s+)?${wdNames}\\b`,
+    "i"
+  );
 
   const weekdayToNum = {
     sunday: 7,
@@ -597,16 +622,24 @@ cleaned = cleaned.replace(
     const wdKey = wdRaw.toLowerCase();
     const targetWeekday =
       weekdayToNum[wdKey] ?? weekdayToNum[wdKey.slice(0, 3)];
-
-    let hour = parseInt(m[1], 10);
-    const minute = m[2] ? parseInt(m[2], 10) : 0;
-    const ap = (m[3] || "").toLowerCase();
+    
+    let hour = parseInt(m[2], 10);
+    const minute = m[3] ? parseInt(m[3], 10) : 0;
+    const ap = (m[4] || "").toLowerCase();
     if (ap === "pm" && hour < 12) hour += 12;
     if (ap === "am" && hour === 12) hour = 0;
 
-    const finalDt = nextWeekdayDate(existingDt || now, targetWeekday, hour, minute, now);
+    const finalDt = nextWeekdayDate(
+      existingDt || now,
+      targetWeekday,
+      hour,
+      minute,
+      now
+    );
     const out = finalDt.toISO();
-    try { console.log("[DT_PARSE] weekday+time ->", out); } catch {}
+    try {
+      console.log("[DT_PARSE] weekday+time ->", out);
+    } catch {}
     return out;
   }
 
@@ -620,22 +653,43 @@ cleaned = cleaned.replace(
     const hour = existingDt ? existingDt.hour : 11;
     const minute = existingDt ? existingDt.minute : 0;
 
-    const finalDt = nextWeekdayDate(existingDt || now, targetWeekday, hour, minute, now);
+    const finalDt = nextWeekdayDate(
+      existingDt || now,
+      targetWeekday,
+      hour,
+      minute,
+      now
+    );
     const out = finalDt.toISO();
-    try { console.log("[DT_PARSE] weekday-only ->", out); } catch {}
+    try {
+      console.log("[DT_PARSE] weekday-only ->", out);
+    } catch {}
     return out;
   }
 
   // D) Luxon formats (fallback). If no explicit year, Luxon uses current year.
   const hasYear = /\b\d{4}\b/.test(cleaned);
   const formats = [
-    "d MMMM yyyy h:mm a", "d MMM yyyy h:mm a", "d/M/yyyy h:mm a",
-    "d MMMM yyyy h a",   "d MMM yyyy h a",   "d/M/yyyy h a",
-    "d MMMM h:mm a",     "d MMM h:mm a",     "d/M h:mm a",
-    "d MMMM h a",        "d MMM h a",        "d/M h a",
-    "cccc h:mm a",       "cccc h a",
-    "d MMMM yyyy",       "d MMM yyyy",       "d/M/yyyy",
-    "d MMMM",            "d MMM",            "d/M",
+    "d MMMM yyyy h:mm a",
+    "d MMM yyyy h:mm a",
+    "d/M/yyyy h:mm a",
+    "d MMMM yyyy h a",
+    "d MMM yyyy h a",
+    "d/M/yyyy h a",
+    "d MMMM h:mm a",
+    "d MMM h:mm a",
+    "d/M h:mm a",
+    "d MMMM h a",
+    "d MMM h a",
+    "d/M h a",
+    "cccc h:mm a",
+    "cccc h a",
+    "d MMMM yyyy",
+    "d MMM yyyy",
+    "d/M/yyyy",
+    "d MMMM",
+    "d MMM",
+    "d/M",
   ];
 
   for (const format of formats) {
@@ -665,11 +719,15 @@ cleaned = cleaned.replace(
     }
 
     const out = finalDt.toISO();
-    try { console.log("[DT_PARSE] luxon-format ->", out, { format }); } catch {}
+    try {
+      console.log("[DT_PARSE] luxon-format ->", out, { format });
+    } catch {}
     return out;
   }
 
-  try { console.log("[DT_PARSE] no match -> null"); } catch {}
+  try {
+    console.log("[DT_PARSE] no match -> null");
+  } catch {}
   return null;
 }
 
