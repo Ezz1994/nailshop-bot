@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { DateTime } from "luxon";
 
 interface Service {
   service_id: string;
@@ -27,6 +28,7 @@ interface WalkinModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmit?: (data: WalkinData) => void;
+  initialDate?: Date;
 }
 
 interface WalkinData {
@@ -35,7 +37,7 @@ interface WalkinData {
   phone?: string;
 }
 
-const WalkinModal = ({ isOpen, onClose, onSubmit }: WalkinModalProps) => {
+const WalkinModal = ({ isOpen, onClose, onSubmit, initialDate }: WalkinModalProps) => {
   const [services, setServices] = useState<Service[]>([]);
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
   const [startTime, setStartTime] = useState("");
@@ -52,15 +54,28 @@ const WalkinModal = ({ isOpen, onClose, onSubmit }: WalkinModalProps) => {
       .then((res) => {
         setServices(res.data.services || []);
         setSelectedServices([]);
-        setStartTime("");
         setPhone("");
+        
+        // Set initial date/time based on initialDate prop or current time
+        if (initialDate) {
+          // Use the selected date from DayView at 9:00 AM in Asia/Amman
+          const jordanDateTime = DateTime.fromJSDate(initialDate, { zone: "Asia/Amman" })
+            .set({ hour: 9, minute: 0, second: 0, millisecond: 0 });
+          // Convert to local datetime-local format (browser's local timezone)
+          const localDateTime = jordanDateTime.setZone("local");
+          setStartTime(localDateTime.toFormat("yyyy-MM-dd'T'HH:mm"));
+        } else {
+          // Fallback to current time
+          const defaultDate = DateTime.now().setZone("Asia/Amman").set({ hour: 9, minute: 0, second: 0 });
+          setStartTime(defaultDate.setZone("local").toFormat("yyyy-MM-dd'T'HH:mm"));
+        }
       })
       .catch((err) => {
         console.error("Failed to load services", err);
         setServices([]);
       })
       .finally(() => setLoading(false));
-  }, [isOpen]);
+  }, [isOpen, initialDate]);
 
   // Toggle selection
   const handleServiceToggle = (serviceId: string) => {
@@ -152,7 +167,7 @@ const WalkinModal = ({ isOpen, onClose, onSubmit }: WalkinModalProps) => {
         startTime,
         phone: phone || undefined,
       });
-      handleClose();
+      onClose();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error("Failed to create booking", err);
@@ -165,16 +180,9 @@ const WalkinModal = ({ isOpen, onClose, onSubmit }: WalkinModalProps) => {
     }
   };
 
-  // Reset all fields & close
-  const handleClose = () => {
-    setSelectedServices([]);
-    setStartTime("");
-    setPhone("");
-    onClose();
-  };
 
   return (
-    <Dialog open={isOpen} onOpenChange={handleClose}>
+    <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-2xl font-bold text-primary">
@@ -293,7 +301,7 @@ const WalkinModal = ({ isOpen, onClose, onSubmit }: WalkinModalProps) => {
             )}
 
             <DialogFooter className="space-x-2">
-              <Button type="button" variant="outline" onClick={handleClose}>
+              <Button type="button" variant="outline" onClick={onClose}>
                 Cancel
               </Button>
               <Button

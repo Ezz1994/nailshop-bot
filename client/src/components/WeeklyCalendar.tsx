@@ -8,6 +8,7 @@ import { isBookingOnDay } from "./utils/dates";
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Eye } from "lucide-react";
 import { Booking, BookingStatus, RawService, RawBooking, BookingService } from "@/types";
 import BookingDrawer from "./BookingDrawer";
+import ErrorBoundary from "./ErrorBoundary";
 import WalkinModal from "./WalkinModal";
 import DayView from "./DayView";
 import { useToast } from "@/hooks/use-toast";
@@ -423,16 +424,18 @@ const WeeklyCalendar = ({ selectedDate, onDateChange }: WeeklyCalendarProps) => 
         Click on any day to view detailed schedule and manage bookings
       </div>
 
-      <BookingDrawer
-        booking={selectedBooking}
-        isOpen={isDrawerOpen}
-        onClose={() => {
-          setIsDrawerOpen(false);
-          setSelectedBooking(null);
-        }}
-        onStatusUpdate={handleStatusUpdate}
-        onBookingUpdate={handleBookingUpdate}
-      />
+      <ErrorBoundary resetKeys={[isDrawerOpen, selectedBooking?.id]}>
+        <BookingDrawer
+          booking={selectedBooking}
+          isOpen={isDrawerOpen}
+          onClose={() => {
+            setIsDrawerOpen(false);
+            setSelectedBooking(null);
+          }}
+          onStatusUpdate={handleStatusUpdate}
+          onBookingUpdate={handleBookingUpdate}
+        />
+      </ErrorBoundary>
 
       <WalkinModal
         isOpen={isWalkinModalOpen}

@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Plus, Calendar as CalendarIcon } from "lucide-react";
 import { Booking, BookingStatus,BookingService  } from "@/types";
 import BookingDrawer from "./BookingDrawer";
+import ErrorBoundary from "./ErrorBoundary";
 import WalkinModal from "./WalkinModal";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
@@ -334,16 +335,18 @@ const BookingTable = ({ selectedDate }: BookingTableProps) => {
       </div>
 
       {/* Booking Drawer */}
-      <BookingDrawer
-        booking={selectedBooking}
-        isOpen={isDrawerOpen}
-        onClose={() => {
-          setIsDrawerOpen(false);
-          setSelectedBooking(null);
-        }}
-        onStatusUpdate={handleStatusUpdate}
-        onBookingUpdate={handleBookingUpdate}
-      />
+      <ErrorBoundary resetKeys={[isDrawerOpen, selectedBooking?.id]}>
+        <BookingDrawer
+          booking={selectedBooking}
+          isOpen={isDrawerOpen}
+          onClose={() => {
+            setIsDrawerOpen(false);
+            setSelectedBooking(null);
+          }}
+          onStatusUpdate={handleStatusUpdate}
+          onBookingUpdate={handleBookingUpdate}
+        />
+      </ErrorBoundary>
 
       {/* Walk-in Modal */}
       <WalkinModal

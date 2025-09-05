@@ -15,6 +15,7 @@ import {
 } from "@/types";
 
 import BookingDrawer from "./BookingDrawer";
+import ErrorBoundary from "./ErrorBoundary";
 import WalkinModal from "./WalkinModal";
 import { useToast } from "@/hooks/use-toast";
 import { DateTime } from "luxon";
@@ -346,20 +347,23 @@ const DayView = ({
       </div>
 
       {/* Drawer & Modals */}
-      <BookingDrawer
-        booking={selectedBooking}
-        isOpen={isDrawerOpen}
-        onClose={() => {
-          setIsDrawerOpen(false);
-          setSelectedBooking(null);
-        }}
-        onStatusUpdate={handleStatusUpdateWithDrawer}
-        onBookingUpdate={onBookingUpdate}
-      />
+      <ErrorBoundary resetKeys={[isDrawerOpen, selectedBooking?.id]}>
+        <BookingDrawer
+          booking={selectedBooking}
+          isOpen={isDrawerOpen}
+          onClose={() => {
+            setIsDrawerOpen(false);
+            setSelectedBooking(null);
+          }}
+          onStatusUpdate={handleStatusUpdateWithDrawer}
+          onBookingUpdate={onBookingUpdate}
+        />
+      </ErrorBoundary>
 
       <WalkinModal
         isOpen={isWalkinModalOpen}
         onClose={() => setIsWalkinModalOpen(false)}
+        initialDate={selectedDate}
         onSubmit={() => {
           setIsWalkinModalOpen(false);
           setLocalRefresh((k) => k + 1);
