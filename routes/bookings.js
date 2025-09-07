@@ -53,7 +53,9 @@ router.put("/api/bookings/:id", async (req, res) => {
 
     await sendWhatsAppBookingUpdate(
       updatedBooking.customer_phone,
-      updatedBooking
+      updatedBooking,
+      undefined,
+      true
     );
 
     res.status(200).json({ booking: updatedBooking });
@@ -68,7 +70,7 @@ router.post("/api/bookings/:id/cancel", async (req, res) => {
     await cancelBooking(bookingId);
 
     const booking = await getBookingDetails(bookingId);
-    await sendWhatsAppBookingUpdate(booking.customer_phone, booking);
+    await sendWhatsAppBookingUpdate(booking.customer_phone, booking, undefined, true);
 
     res.status(200).json({ success: true });
   } catch (err) {
@@ -106,7 +108,7 @@ router.post("/api/bookings", async (req, res) => {
     console.log("Sending WhatsApp", fullBooking.customer_phone, fullBooking);
 
     // Send WhatsApp notification
-    await sendWhatsAppBookingUpdate(fullBooking.customer_phone, fullBooking);
+    await sendWhatsAppBookingUpdate(fullBooking.customer_phone, fullBooking, undefined, true);
 
     res.status(201).json({ booking: fullBooking });
   } catch (err) {

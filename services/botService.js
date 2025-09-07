@@ -206,6 +206,40 @@ function parseMonthWordFallback(text, existingISO = null) {
 function toArabicDigits(str) {
   return str.replace(/\d/g, (d) => "٠١٢٣٤٥٦٧٨٩"[d]);
 }
+
+// Helper function to generate business hours text for messages
+function getBusinessHoursText(lang = "en") {
+  if (!BUSINESS_HOURS) {
+    return lang === "ar" ? "حسب أوقات العمل" : "during business hours";
+  }
+  
+  const days = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+  const dayNames = {
+    en: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+    ar: ["الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"]
+  };
+  
+  const openDays = [];
+  for (let i = 0; i < days.length; i++) {
+    const dayKey = days[i];
+    const hours = BUSINESS_HOURS[dayKey];
+    if (hours && hours.length === 2) {
+      const [open, close] = hours;
+      const dayName = dayNames[lang][i];
+      const timeRange = lang === "ar" ? 
+        `${toArabicDigits(open)}–${toArabicDigits(close)}` : 
+        `${open}–${close}`;
+      openDays.push(`${dayName} ${timeRange}`);
+    }
+  }
+  
+  if (openDays.length === 0) {
+    return lang === "ar" ? "حسب أوقات العمل" : "during business hours";
+  }
+  
+  const intro = lang === "ar" ? "أوقات العمل: " : "Business hours: ";
+  return intro + openDays.join(", ");
+}
 function sendReply(res, msg) {
   const twiml = new twilio.twiml.MessagingResponse();
   twiml.message(msg);
@@ -309,7 +343,7 @@ async function postNameResumeAfterFirstReply({
           ? picked.name_ar || picked.name_en
           : picked.name_en || picked.name_ar;
 
-      let msg = `${thanks}\n\n` + BOT_MESSAGES.bookingAskWhen[userLang](svcTxt);
+      let msg = `${thanks}\n\n` + BOT_MESSAGES.bookingAskWhen[userLang](svcTxt, getBusinessHoursText(userLang));
       if (userLang === "ar") msg = toArabicDigits(msg);
       return sendReply(res, msg);
     }
@@ -634,13 +668,20 @@ function findServiceByText(txt, svcs, lang = "en") {
 }
 
 // --- WhatsApp notification sender ---
-async function sendWhatsAppBookingUpdate(phone, booking, lang = "en") {
+async function sendWhatsAppBookingUpdate(phone, booking, lang = "en", fromUI = false) {
   if (!phone) return;
-  if (booking.language && !lang) lang = booking.language;
+  
+  // For UI-triggered confirmations, detect language from last user message
+  if (fromUI) {
+    lang = detectLanguageFromLastMessage(phone);
+  } else if (booking.language && !lang) {
+    lang = booking.language;
+  }
+  
   const L = lang === "ar" ? "ar" : "en";
 
   const time = booking.start_at
-    ? formatWhatsAppDate(booking.start_at, L)
+    ? formatConfirmationDateTime(booking.start_at, L)
     : NOTIFY_MESSAGES.unknown[L];
 
   const serviceNames = Array.isArray(booking.services)
@@ -665,9 +706,9 @@ async function sendWhatsAppBookingUpdate(phone, booking, lang = "en") {
 
   let msgBuilder;
   if (booking.status === "cancelled" || booking.status === "canceled") {
-    msgBuilder = NOTIFY_MESSAGES.cancelled[L];
+    msgBuilder = fromUI ? NOTIFY_MESSAGES.cancelledNoNotes[L] : NOTIFY_MESSAGES.cancelled[L];
   } else if (booking.status === "confirmed") {
-    msgBuilder = NOTIFY_MESSAGES.confirmed[L];
+    msgBuilder = fromUI ? NOTIFY_MESSAGES.confirmedNoNotes[L] : NOTIFY_MESSAGES.confirmed[L];
   } else {
     const statusLabel =
       L === "ar"
@@ -676,7 +717,9 @@ async function sendWhatsAppBookingUpdate(phone, booking, lang = "en") {
           : booking.status
         : booking.status.charAt(0).toUpperCase() + booking.status.slice(1);
     msgBuilder = ({ service, time, notes }) =>
-      NOTIFY_MESSAGES.updated[L]({ service, time, status: statusLabel, notes });
+      fromUI 
+        ? NOTIFY_MESSAGES.updatedNoNotes[L]({ service, time, status: statusLabel })
+        : NOTIFY_MESSAGES.updated[L]({ service, time, status: statusLabel, notes });
   }
 
   let msg = msgBuilder({
@@ -786,18 +829,56 @@ Type "I want to cancel" to cancel a booking.
     ar: "ما قدرت ألاقي رقم الحجز هذا.",
   },
   updateWhat: {
-    en: "What would you like to update? You can say:\n• 'Change time to 3pm'\n• 'Move to tomorrow'\n• 'Change service to pedicure'\n• Or tell me the new time and service together",
-    ar: "شو حابب تعدل؟ ممكن تقول:\n• 'غيّر الوقت للساعة 3'\n• 'أجّلها لبكرا'\n• 'غيّر الخدمة لبديكير'\n• أو اكتب الوقت والخدمة مع بعض",
+    en: (businessHours) => `What would you like to update?
+
+🕐 **Date or time:** tomorrow at 4 pm, Monday at 7 pm, 25 sep at 3 pm
+💅 **Service name**
+📝 **Date, time and Service**
+
+${businessHours}`,
+    ar: (businessHours) => `شو حابب تعدل؟
+
+🕐 **التاريخ أو الوقت:** بكرا الساعة ٤ العصر، الإثنين الساعة ٧ مساءً، ٢٥ أيلول الساعة ٣ العصر
+💅 **اسم الخدمة**
+📝 **التاريخ والوقت والخدمة**
+
+${businessHours}`,
   },
   updateWhatAfterSelect: {
-    en: "Great! What would you like to update? You can say:\n• 'Change time to 3pm'\n• 'Move to tomorrow'\n• 'Change service to pedicure'\n• Or tell me the new time and service together",
-    ar: "تمام! شو بدك تعدل؟\n• 'غيّر الوقت للساعة 3'\n• 'أجّلها لبكرا'\n• 'غيّر الخدمة لبديكير'\n• أو اكتب الوقت والخدمة مع بعض",
+    en: (businessHours) => `Great! What would you like to update?
+
+🕐 **Date or time:** tomorrow at 4 pm, Monday at 7 pm, 25 sep at 3 pm
+💅 **Service name**
+📝 **Date, time and Service**
+
+${businessHours}`,
+    ar: (businessHours) => `تمام! شو بدك تعدل؟
+
+🕐 **التاريخ أو الوقت:** بكرا الساعة ٤ العصر، الإثنين الساعة ٧ مساءً، ٢٥ أيلول الساعة ٣ العصر
+💅 **اسم الخدمة**
+📝 **التاريخ والوقت والخدمة**
+
+${businessHours}`,
   },
   foundOneUpdate: {
-    en: (svcNames, when) =>
-      `I found your booking: ${svcNames} on ${when}.\nWhat would you like to update? You can say:\n• 'Change time to 3pm'\n• 'Move to tomorrow'\n• 'Change service to pedicure'\n• Or tell me the new time and service together`,
-    ar: (svcNames, when) =>
-      `لقيت حجزك: ${svcNames} يوم ${when}.\nشو بدك تعدل؟\n• 'غيّر الوقت للساعة 3'\n• 'أجّلها لبكرا'\n• 'غيّر الخدمة لبديكير'\n• أو اكتب الوقت والخدمة مع بعض`,
+    en: (svcNames, when, businessHours) =>
+      `I found your booking: ${svcNames} on ${when}.
+What would you like to update?
+
+🕐 **Date or time:** tomorrow at 4 pm, Monday at 7 pm, 25 sep at 3 pm
+💅 **Service name**
+📝 **Date, time and Service**
+
+${businessHours}`,
+    ar: (svcNames, when, businessHours) =>
+      `لقيت حجزك: ${svcNames} يوم ${when}.
+شو بدك تعدل؟
+
+🕐 **التاريخ أو الوقت:** بكرا الساعة ٤ العصر، الإثنين الساعة ٧ مساءً، ٢٥ أيلول الساعة ٣ العصر
+💅 **اسم الخدمة**
+📝 **التاريخ والوقت والخدمة**
+
+${businessHours}`,
   },
   foundOneCancel: {
     en: (svcNames, when) =>
@@ -819,8 +900,38 @@ Type "I want to cancel" to cancel a booking.
     ar: (listTxt) => `أي حجز بدك تعدل؟ رد برقم الحجز:\n${listTxt}`,
   },
   dateParseFail: {
-    en: "Sorry, I couldn't parse that date/time. Try something like 'tomorrow 3pm' or 'Monday 5pm'.",
-    ar: "آسف، ما قدرت أفهم التاريخ/الوقت. جرّب تكتب زي: 'بكرا 3 العصر' أو 'الإثنين 5'.",
+    en: (businessHours) => `Sorry, I couldn't parse that date/time. Here are examples of what I understand:
+
+📅 **Days:**
+• today, tomorrow
+• monday, tuesday, wednesday, etc.
+• 25 9 (Sep 25), 25 9 4 pm (Sep 25 at 4pm)
+• 2 sep, 10 September 6 pm
+• 25/9, 25-9-2024
+
+⏰ **Times:**
+• 3, 3 pm, 11 am
+• 3:30, 3:30 pm
+
+${businessHours}
+
+Try: "tomorrow 3pm", "monday 5pm", or "25 9 4 pm"`,
+    ar: (businessHours) => `آسف، ما قدرت أفهم التاريخ/الوقت. هاي أمثلة على اللي بفهمه:
+
+📅 **الأيام:**
+• بكرا، غداً
+• الإثنين، الثلاثاء، الأربعاء، إلخ
+• ٢٥ ٩ (٢٥ أيلول)، ٢٥ ٩ ٤ العصر
+• ٢ أيلول، ١٠ سبتمبر ٦ مساءً
+• ٢٥/٩، ٢٥-٩-٢٠٢٤
+
+⏰ **الأوقات:**
+• ٣، ٣ العصر، ١١ صباحاً
+• ٣:٣٠، ٣:٣٠ العصر
+
+${businessHours}
+
+جرّب: "بكرا ٣ العصر"، "الإثنين ٥"، أو "٢٥ ٩ ٤ العصر"`,
   },
   updateError: {
     en: "Sorry, there was an error updating your booking. Please try again.",
@@ -848,14 +959,74 @@ Type "I want to cancel" to cancel a booking.
     ar: "تمام! أي خدمة بدك؟ رد برقمها أو باسمها:",
   },
   bookingAskWhen: {
-    en: (svc) =>
-      `Got it: ${svc}. When would you like it? (e.g., "Tue 5pm" / "tomorrow 3")`,
-    ar: (svc) =>
-      `تمام: ${svc}. إمتى بتحب الموعد؟ (مثلاً: "الثلاثاء ٥" أو "بكرا ٣")`,
+    en: (svc, businessHours) =>
+      `Got it: ${svc}. When would you like it?
+
+📅 **Examples:**
+• tomorrow 3pm
+• monday 5pm  
+• 25 9 (Sep 25)
+• 25 9 4 pm (Sep 25 at 4pm)
+• 2 sep 6 pm
+• today 11am
+• wed 2:30 pm
+• 15/12 3 pm
+
+${businessHours}
+
+Just tell me the day and time!`,
+    ar: (svc, businessHours) =>
+      `تمام: ${svc}. إمتى بتحب الموعد؟
+
+📅 **أمثلة:**
+• بكرا ٣ العصر
+• الإثنين ٥
+• ٢٥ ٩ (٢٥ أيلول)
+• ٢٥ ٩ ٤ العصر
+• ٢ أيلول ٦ مساءً
+• اليوم ١١ صباحاً
+• الأربعاء ٢:٣٠
+• ١٥/١٢ ٣ العصر
+
+${businessHours}
+
+قلي اليوم والوقت بس!`,
   },
   bookingDateFail: {
-    en: "Sorry, I couldn't understand the date/time. Please send day & time together (e.g., Tue 5pm).",
-    ar: "آسف، ما قدرت أفهم التاريخ/الوقت. ابعت اليوم والوقت مع بعض (مثلاً: الثلاثاء ٥).",
+    en: (businessHours) => `Sorry, I couldn't understand the date/time. Here's what I can understand:
+
+📅 **Days & Times:**
+• tomorrow 3pm, monday 5pm
+• 25 9 (Sep 25), 25 9 4 pm  
+• 2 sep 6 pm, 10 September
+• today 11am, tuesday 2:30 pm
+• wed, thursday 4 pm
+• 15/12, 25-12-2024
+
+⏰ **Time formats:**
+• 3, 11 am, 4 pm
+• 2:30, 3:45 pm
+
+${businessHours}
+
+Please send day & time together!`,
+    ar: (businessHours) => `آسف، ما قدرت أفهم التاريخ/الوقت. هاي اللي بقدر أفهمه:
+
+📅 **الأيام والأوقات:**
+• بكرا ٣ العصر، الإثنين ٥
+• ٢٥ ٩ (٢٥ أيلول)، ٢٥ ٩ ٤ العصر
+• ٢ أيلول ٦ مساءً، ١٠ سبتمبر
+• اليوم ١١ صباحاً، الثلاثاء ٢:٣٠
+• الأربعاء، الخميس ٤ العصر
+• ١٥/١٢، ٢٥-١٢-٢٠٢٤
+
+⏰ **صيغ الوقت:**
+• ٣، ١١ صباحاً، ٤ العصر
+• ٢:٣٠، ٣:٤٥ العصر
+
+${businessHours}
+
+ابعت اليوم والوقت مع بعض!`,
   },
   bookedId: {
     en: (id) => `✅ Booked! Your ID is BR-${id}.`,
@@ -880,17 +1051,35 @@ const NOTIFY_MESSAGES = {
     ar: ({ service, time, notes }) =>
       `✅ تم تأكيد حجزك!\n\nالخدمة: ${service}\nالموعد: ${time}\nالحالة: مؤكد\nملاحظات: ${notes}`,
   },
+  confirmedNoNotes: {
+    en: ({ service, time }) =>
+      `✅ Your booking has been confirmed!\n\nService: ${service}\nTime: ${time}\nStatus: Confirmed`,
+    ar: ({ service, time }) =>
+      `✅ تم تأكيد حجزك!\n\nالخدمة: ${service}\nالموعد: ${time}\nالحالة: مؤكد`,
+  },
   cancelled: {
     en: ({ service, time, notes }) =>
       `❌ Your booking has been cancelled.\n\nService: ${service}\nTime: ${time}\nStatus: Cancelled\nNotes: ${notes}`,
     ar: ({ service, time, notes }) =>
       `❌ تم إلغاء حجزك.\n\nالخدمة: ${service}\nالموعد: ${time}\nالحالة: ملغي\nملاحظات: ${notes}`,
   },
+  cancelledNoNotes: {
+    en: ({ service, time }) =>
+      `❌ Your booking has been cancelled.\n\nService: ${service}\nTime: ${time}\nStatus: Cancelled`,
+    ar: ({ service, time }) =>
+      `❌ تم إلغاء حجزك.\n\nالخدمة: ${service}\nالموعد: ${time}\nالحالة: ملغي`,
+  },
   updated: {
     en: ({ service, time, status, notes }) =>
       `🔄 Your booking has been updated!\n\nService: ${service}\nTime: ${time}\nStatus: ${status}\nNotes: ${notes}`,
     ar: ({ service, time, status, notes }) =>
       `🔄 تم تعديل حجزك!\n\nالخدمة: ${service}\nالموعد: ${time}\nالحالة: ${status}\nملاحظات: ${notes}`,
+  },
+  updatedNoNotes: {
+    en: ({ service, time, status }) =>
+      `🔄 Your booking has been updated!\n\nService: ${service}\nTime: ${time}\nStatus: ${status}`,
+    ar: ({ service, time, status }) =>
+      `🔄 تم تعديل حجزك!\n\nالخدمة: ${service}\nالموعد: ${time}\nالحالة: ${status}`,
   },
   unknown: { en: "Unknown", ar: "غير معروف" },
   none: { en: "-", ar: "-" },
@@ -917,6 +1106,9 @@ async function handleIncomingMessage(req, res) {
   const prevLang = cache.get(`${fromPhone}-lang`) || "en";
   const userLang = guessLang(incomingMsg, prevLang);
   cache.set(`${fromPhone}-lang`, userLang);
+  
+  // Store the last user message for language detection in UI confirmations
+  cache.set(`${fromPhone}-lastMessage`, incomingMsg);
 
   // === CUSTOMER NAME CAPTURE (first-time only) ===
   const awaitingKey = `${fromPhone}-awaitingName`;
@@ -1137,7 +1329,7 @@ async function handleIncomingMessage(req, res) {
           ? picked.name_ar || picked.name_en
           : picked.name_en || picked.name_ar;
 
-      let msg = BOT_MESSAGES.bookingAskWhen[userLang](svcTxt);
+      let msg = BOT_MESSAGES.bookingAskWhen[userLang](svcTxt, getBusinessHoursText(userLang));
       if (userLang === "ar") msg = toArabicDigits(msg);
       const twiml = new twilio.twiml.MessagingResponse();
       twiml.message(msg);
@@ -1314,7 +1506,7 @@ async function handleIncomingMessage(req, res) {
       // If we detected neither a time nor any service names, then fail here
       if (!updateFields.newStartISO && !updateFields.newServices) {
         const twiml = new twilio.twiml.MessagingResponse();
-        twiml.message(BOT_MESSAGES.dateParseFail[userLang]);
+        twiml.message(BOT_MESSAGES.dateParseFail[userLang](getBusinessHoursText(userLang)));
         return res.type("text/xml").send(twiml.toString());
       }
       if (updateFields.newStartISO || updateFields.newServices) {
@@ -1454,7 +1646,7 @@ async function handleIncomingMessage(req, res) {
           }
         }
         const twiml = new twilio.twiml.MessagingResponse();
-        twiml.message(BOT_MESSAGES.updateWhat[userLang]);
+        twiml.message(BOT_MESSAGES.updateWhat[userLang](getBusinessHoursText(userLang)));
         return res.type("text/xml").send(twiml.toString());
       } else {
         await cancelBooking(pendingArr[0]);
@@ -1560,7 +1752,7 @@ async function handleIncomingMessage(req, res) {
         cache.set(fromPhone, [pending[idx - 1]]);
         markSelected(fromPhone);
         const twiml = new twilio.twiml.MessagingResponse();
-        twiml.message(BOT_MESSAGES.updateWhat[userLang]);
+        twiml.message(BOT_MESSAGES.updateWhat[userLang](getBusinessHoursText(userLang)));
         return res.type("text/xml").send(twiml.toString());
       } else {
         await cancelBooking(pending[idx - 1]);
@@ -1599,7 +1791,7 @@ async function handleIncomingMessage(req, res) {
       userLang === "ar"
         ? picked.name_ar || picked.name_en
         : picked.name_en || picked.name_ar;
-    let msg = BOT_MESSAGES.bookingAskWhen[userLang](svcTxt);
+    let msg = BOT_MESSAGES.bookingAskWhen[userLang](svcTxt, getBusinessHoursText(userLang));
     if (userLang === "ar") msg = toArabicDigits(msg);
     const twiml = new twilio.twiml.MessagingResponse();
     twiml.message(msg);
@@ -1636,7 +1828,7 @@ async function handleIncomingMessage(req, res) {
       parseMonthWordFallback(cleaned, null);
 
     if (!startISO) {
-      let msg = BOT_MESSAGES.bookingDateFail[userLang];
+      let msg = BOT_MESSAGES.bookingDateFail[userLang](getBusinessHoursText(userLang));
       if (userLang === "ar") msg = toArabicDigits(msg);
       const twiml = new twilio.twiml.MessagingResponse();
       twiml.message(msg);
@@ -2010,7 +2202,7 @@ ${menuText}
 
       if (!newISO && matchedServices.length === 0) {
         const twiml = new twilio.twiml.MessagingResponse();
-        twiml.message(BOT_MESSAGES.dateParseFail[userLang]);
+        twiml.message(BOT_MESSAGES.dateParseFail[userLang](getBusinessHoursText(userLang)));
         return res.type("text/xml").send(twiml.toString());
       }
 
@@ -2355,6 +2547,62 @@ async function handleUpdateBooking(args, fromPhone, userLang, res) {
 
   twiml.message(confirmMsg);
   return res.type("text/xml").send(twiml.toString());
+}
+
+/**
+ * Detects language from the last user message stored in cache
+ * Falls back to session language or English if no message found
+ */
+function detectLanguageFromLastMessage(phone) {
+  // Try to get the last user message from cache
+  const lastMessage = cache.get(`${phone}-lastMessage`);
+  if (lastMessage) {
+    const detectedLang = guessLang(lastMessage);
+    if (detectedLang) return detectedLang;
+  }
+  
+  // Fallback to cached language preference
+  const cachedLang = cache.get(`${phone}-lang`);
+  if (cachedLang) return cachedLang;
+  
+  // Final fallback to English
+  return "en";
+}
+
+/**
+ * Format a date/time for WhatsApp confirmations with proper localization
+ * Uses Arabic-Indic numerals and "ص/م" for Arabic, standard format for English
+ */
+function formatConfirmationDateTime(dateISO, lang = "en") {
+  if (!dateISO) return lang === "ar" ? "غير معروف" : "Unknown";
+  
+  const dt = DateTime.fromISO(dateISO).setZone(TIME_ZONE);
+  
+  if (lang === "ar") {
+    // Format: "الثلاثاء، ١٠ سبتمبر ٢٠٢٤ في ٣:٠٠ م"
+    const dayName = dt.setLocale("ar").toFormat("cccc");
+    const day = dt.day;
+    const monthName = dt.setLocale("ar").toFormat("LLLL");
+    const year = dt.year;
+    let hour = dt.hour;
+    const minute = dt.minute;
+    
+    // Convert to 12-hour format with Arabic AM/PM
+    let ampm = "ص"; // صباحاً (AM)
+    if (hour >= 12) {
+      ampm = "م"; // مساءً (PM)
+      if (hour > 12) hour -= 12;
+    }
+    if (hour === 0) hour = 12;
+    
+    const timeStr = `${hour}:${minute.toString().padStart(2, '0')} ${ampm}`;
+    const fullStr = `${dayName}، ${day} ${monthName} ${year} في ${timeStr}`;
+    
+    return toArabicDigits(fullStr);
+  } else {
+    // Format: "Tuesday, September 10, 2024 at 3:00 PM"
+    return dt.toFormat("cccc, LLLL d, yyyy 'at' h:mm a");
+  }
 }
 
 module.exports = { handleIncomingMessage, sendWhatsAppBookingUpdate };

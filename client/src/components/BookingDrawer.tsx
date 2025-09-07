@@ -142,7 +142,6 @@ const BookingDrawer = ({
         start_at: newStartISO,
         end_at: formatAsAmmanISO(editedBooking.end_at),
         phone: editedBooking.customer_phone,
-        notes: editedBooking.notes,
         total_price: editedBooking.total_price,
         total_duration: editedBooking.total_duration,
       };
@@ -349,25 +348,6 @@ const BookingDrawer = ({
               </div>
             ) : (
               <div className="bg-gray-50 rounded-lg p-3 text-gray-500">No phone number</div>
-            )}
-          </div>
-
-          {/* Notes */}
-          <div>
-            <span className="font-medium block mb-2">Notes:</span>
-            {isEditing ? (
-              <Textarea
-                value={editedBooking?.notes || ""}
-                onChange={(e) => handleInputChange("notes", e.target.value)}
-                placeholder="Add notes..."
-                rows={3}
-              />
-            ) : booking.notes ? (
-              <div className="bg-gray-50 rounded-lg p-3">
-                <p className="text-gray-700">{booking.notes}</p>
-              </div>
-            ) : (
-              <div className="bg-gray-50 rounded-lg p-3 text-gray-500">No notes</div>
             )}
           </div>
 

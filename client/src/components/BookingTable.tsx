@@ -314,12 +314,6 @@ const BookingTable = ({ selectedDate }: BookingTableProps) => {
                         </div>
                       )}
 
-                      {booking.notes && (
-                        <div className="flex items-center space-x-2">
-                          <span className="font-medium">Notes:</span>
-                          <span className="text-gray-600">{booking.notes}</span>
-                        </div>
-                      )}
                     </div>
                   </div>
 

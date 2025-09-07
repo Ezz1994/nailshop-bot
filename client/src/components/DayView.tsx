@@ -321,12 +321,6 @@ const DayView = ({
                             </div>
                           )}
 
-                          {booking.notes && (
-                            <div className="flex items-start space-x-2">
-                              <span className="font-medium">Notes:</span>
-                              <span className="text-gray-600">{booking.notes}</span>
-                            </div>
-                          )}
                         </div>
                       </div>
 

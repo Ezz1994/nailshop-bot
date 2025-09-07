@@ -530,6 +530,73 @@ function parseJordanDateTime(
     console.log("[DT_PARSE] cleaned:", cleaned);
   } catch {}
 
+  // D M format parsing (e.g., "25 9" for Sep 25, or "25 9 4 pm" for Sep 25 at 4pm)
+  const dmOnlyMatch = cleaned.match(/^\s*(\d{1,2})\s+(\d{1,2})\s*$/);
+  const dmWithTimeMatch = cleaned.match(/^\s*(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*$/);
+  
+  // Handle D M with time (e.g., "25 9 4 pm")
+  if (dmWithTimeMatch) {
+    const day = parseInt(dmWithTimeMatch[1], 10);
+    const month = parseInt(dmWithTimeMatch[2], 10);
+    let hour = parseInt(dmWithTimeMatch[3], 10);
+    const minute = dmWithTimeMatch[4] ? parseInt(dmWithTimeMatch[4], 10) : 0;
+    const ap = (dmWithTimeMatch[5] || "").toLowerCase();
+    
+    // Validate month (1-12) and day (1-31, basic validation)
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      // Handle AM/PM
+      if (ap === "pm" && hour < 12) hour += 12;
+      if (ap === "am" && hour === 12) hour = 0;
+      
+      const year = now.year;
+      let dt = DateTime.fromObject(
+        { year, month, day, hour, minute, second: 0, millisecond: 0 },
+        { zone: jordanZone }
+      );
+      
+      // If the date is in the past, move to next year
+      if (dt <= now) {
+        dt = dt.plus({ years: 1 });
+      }
+      
+      const out = dt.toISO();
+      try {
+        console.log("[DT_PARSE] D M with time ->", out, { day, month, year: dt.year, hour, minute });
+      } catch {}
+      return out;
+    }
+  }
+  
+  // Handle D M without time (e.g., "25 9")
+  if (dmOnlyMatch) {
+    const day = parseInt(dmOnlyMatch[1], 10);
+    const month = parseInt(dmOnlyMatch[2], 10);
+    
+    // Validate month (1-12) and day (1-31, basic validation)
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      // Use current year and preserve existing time if available
+      const year = now.year;
+      let hour = existingDt ? existingDt.hour : 11;
+      let minute = existingDt ? existingDt.minute : 0;
+      
+      let dt = DateTime.fromObject(
+        { year, month, day, hour, minute, second: 0, millisecond: 0 },
+        { zone: jordanZone }
+      );
+      
+      // If the date is in the past, move to next year
+      if (dt <= now) {
+        dt = dt.plus({ years: 1 });
+      }
+      
+      const out = dt.toISO();
+      try {
+        console.log("[DT_PARSE] D M format ->", out, { day, month, year: dt.year, hour, minute });
+      } catch {}
+      return out;
+    }
+  }
+
   // Relative-day parsing: today/tomorrow with optional time (preserve existing time when absent)
   const relRe =
     /\b(today|tomorrow)\b(?:\s*(?:at)?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?/i;
