@@ -27,8 +27,9 @@ const {
 const {
   getCustomerByPhone,
   upsertCustomer,
-  getLastBookingName,
+  getLastBookingName
 } = require("./customerServices");
+const { extractDisplayName } = require("../utils/nameExtractor");
 
 // 0 = unlimited (disabled). Set MAX_CONCURRENT in .env to enable
 const MAX_CONCURRENT = Number(process.env.MAX_CONCURRENT || "0");
@@ -1168,7 +1169,10 @@ async function handleIncomingMessage(req, res) {
 
   // 3) We are waiting for the user's name now
   if (!customerRow && cache.get(awaitingKey)) {
-    const nameText = incomingMsg.trim();
+    const rawNameText = incomingMsg.trim();
+    
+    // Extract and normalize the display name from user input
+    const nameText = extractDisplayName(rawNameText) || rawNameText.trim();
 
     if (!looksLikeName(nameText)) {
       const again =
