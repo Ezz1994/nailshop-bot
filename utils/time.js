@@ -119,7 +119,19 @@ function replaceArabicAmPm(text) {
   text = text.replace(/\u0640/gu, "");
   text = text.replace(/[\u064B-\u0652]/gu, "");
 
-  // PM tokens
+  // Handle attached PM tokens (digit directly followed by PM indicator)
+  text = text.replace(
+    /(\d{1,2}(?::\d{2})?)(ظهر|عصر|مساء|مسا|المساء|المسا|المغرب|مغرب|ليل|الليل)/gu,
+    "$1 pm "
+  );
+  
+  // Handle attached AM tokens (digit directly followed by AM indicator)  
+  text = text.replace(
+    /(\d{1,2}(?::\d{2})?)(صباح|الصبح|صبح|الفجر|فجر)/gu,
+    "$1 am "
+  );
+
+  // PM tokens with word boundaries (existing patterns)
   text = text.replace(
     /(^|[\s:،,.\-])بعد\s+ال[ظض]هر(?=$|[\s:،,.\-]|$)/gu,
     "$1 pm "
@@ -129,8 +141,9 @@ function replaceArabicAmPm(text) {
     "$1 pm "
   );
   text = text.replace(/(^|[\s:،,.\-])العصر(?=$|[\s:،,.\-]|$)/gu, "$1 pm ");
+  text = text.replace(/(^|[\s:،,.\-])عصر(?=$|[\s:،,.\-]|$)/gu, "$1 pm ");
   text = text.replace(
-    /(^|[\s:،,.\-])(مساء(?:ا)?|المساء|مسا)(?=$|[\s:،,.\-]|$)/gu,
+    /(^|[\s:،,.\-])(مساء(?:ا)?|المساء|مسا|المسا)(?=$|[\s:،,.\-]|$)/gu,
     "$1 pm "
   );
   text = text.replace(
@@ -142,7 +155,7 @@ function replaceArabicAmPm(text) {
     "$1 pm "
   );
 
-  // AM tokens
+  // AM tokens with word boundaries (existing patterns)
   text = text.replace(
     /(^|[\s:،,.\-])(الصبح|صبح)(?=$|[\s:،,.\-]|$)/gu,
     "$1 am "
@@ -245,6 +258,10 @@ function extractArabicDate(text, refDate = new Date(), noRecurse = false) {
   // 1) Normalize digits and am/pm words
   let src = arabicIndicToEnglish(text);
   let forTime = replaceArabicAmPm(src);
+  
+  try {
+    console.log("[DT_PARSE] forTime after replaceArabicAmPm ->", forTime);
+  } catch {}
 
   // 2) Try explicit D/M(/Y)
   const dmy = forTime.match(/(\d{1,2})[\/\-\.](\d{1,2})(?:[\/\-\.](\d{2,4}))?/);
@@ -268,15 +285,28 @@ function extractArabicDate(text, refDate = new Date(), noRecurse = false) {
   let dmyExec = dmyRe.exec(forTime);
   const afterIdx = dmyExec ? dmyExec.index + dmyExec[0].length : 0;
 
+  // Improved time regex to handle more flexible spacing and PM detection
   const timeReAll =
-    /(?:الساعة|ساعة|ساعه)?\s*(\d{1,2})(?:\s*[:٫،]\s*(\d{2}))?\s*(am|pm)?/gi;
+    /(?:الساعة|ساعة|ساعه)?\s*(\d{1,2})(?:\s*[:٫،]\s*(\d{2}))?\s*(am|pm|صباح|مساء|ظهر|عصر)?/gi;
   let best = null;
   for (const m of forTime.matchAll(timeReAll)) {
     const idx = m.index;
     const h = parseInt(m[1], 10);
     const min = m[2] ? parseInt(m[2], 10) : 0;
-    const apTok = (m[3] || "").toLowerCase();
-    if (isNaN(h) || h < 0 || h > 12) continue;
+    let apTok = (m[3] || "").toLowerCase();
+    
+    // Handle Arabic time indicators that might not have been replaced
+    if (apTok === "ظهر" || apTok === "عصر" || apTok === "مساء") {
+      apTok = "pm";
+    } else if (apTok === "صباح") {
+      apTok = "am";
+    }
+    
+    try {
+      console.log("[DT_PARSE] time match ->", { match: m[0], hour: h, minute: min, apTok, hasAp: apTok === "am" || apTok === "pm" });
+    } catch {}
+    
+    if (isNaN(h) || (apTok && (h < 1 || h > 12)) || (!apTok && (h < 0 || h > 24))) continue;
     const candidate = {
       idx,
       h,
@@ -302,6 +332,20 @@ function extractArabicDate(text, refDate = new Date(), noRecurse = false) {
     ap = best.apTok;
   }
 
+  try {
+    console.log("[DT_PARSE] timeReAll matches ->", Array.from(forTime.matchAll(timeReAll)));
+  } catch {}
+
+  // 4) Check for weekday in the original Arabic text
+  let weekdayFound = null;
+  const arabicWeekdays = Object.keys(AR_DAY);
+  for (const arDay of arabicWeekdays) {
+    if (new RegExp(arDay, 'i').test(text)) {
+      weekdayFound = AR_DAY[arDay];
+      break;
+    }
+  }
+
   // If D/M date, construct DateTime now.
   if (day != null && month != null) {
     let dt = DateTime.fromObject(
@@ -317,7 +361,68 @@ function extractArabicDate(text, refDate = new Date(), noRecurse = false) {
     return dt.toISO();
   }
 
-  // 4) Microsoft Recognizers (Arabic)
+  // 5) If we found both weekday and time, construct combined date/time
+  if (weekdayFound && hour != null) {
+    const weekdayToNum = {
+      sunday: 7, monday: 1, tuesday: 2, wednesday: 3,
+      thursday: 4, friday: 5, saturday: 6
+    };
+    
+    const targetWeekday = weekdayToNum[weekdayFound];
+    if (targetWeekday) {
+      // Calculate next occurrence of this weekday
+      let daysAhead = (targetWeekday - now.weekday + 7) % 7;
+      if (daysAhead === 0) {
+        // Same weekday - check if time has passed
+        let h = hour;
+        if (ap === "pm" && h < 12) h += 12;
+        if (ap === "am" && h === 12) h = 0;
+        
+        const todayAtTime = now.set({ hour: h, minute, second: 0, millisecond: 0 });
+        if (todayAtTime <= now) {
+          daysAhead = 7; // Move to next week
+        }
+      }
+      
+      let dt = now.plus({ days: daysAhead });
+      let h = hour;
+      if (ap === "pm" && h < 12) h += 12;
+      if (ap === "am" && h === 12) h = 0;
+      dt = dt.set({ hour: h, minute, second: 0, millisecond: 0 });
+      
+      try {
+        console.log("[DT_PARSE] arabic weekday+time ->", dt.toISO(), { weekday: weekdayFound, hour: h, minute, originalHour: hour, ap });
+      } catch {}
+      return dt.toISO();
+    }
+  }
+
+  // 6) If only weekday found (no time), use existing time or default
+  if (weekdayFound) {
+    const weekdayToNum = {
+      sunday: 7, monday: 1, tuesday: 2, wednesday: 3,
+      thursday: 4, friday: 5, saturday: 6
+    };
+    
+    const targetWeekday = weekdayToNum[weekdayFound];
+    if (targetWeekday) {
+      let daysAhead = (targetWeekday - now.weekday + 7) % 7;
+      if (daysAhead === 0) daysAhead = 7; // Move to next week if same day
+      
+      let dt = now.plus({ days: daysAhead });
+      // Keep existing time if available, otherwise default to 11:00
+      const existingHour = now.hour;
+      const existingMinute = now.minute;
+      dt = dt.set({ hour: existingHour, minute: existingMinute, second: 0, millisecond: 0 });
+      
+      try {
+        console.log("[DT_PARSE] arabic weekday-only ->", dt.toISO(), { weekday: weekdayFound });
+      } catch {}
+      return dt.toISO();
+    }
+  }
+
+  // 7) Microsoft Recognizers (Arabic)
   if (!noRecurse) {
     try {
       const res = recognizeDateTime(text, "ar-sa", refDate) || [];
