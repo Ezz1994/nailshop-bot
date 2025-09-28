@@ -301,13 +301,13 @@ const WalkinModal = ({ isOpen, onClose, onSubmit, initialDate }: WalkinModalProp
             )}
 
             <DialogFooter className="space-x-2">
-              <Button type="button" variant="outline" onClick={onClose}>
+              <Button type="button" variant="outline" onClick={onClose} className="btn-cancel">
                 Cancel
               </Button>
               <Button
                 type="submit"
                 disabled={selectedServices.length === 0 || !startTime || loading}
-                className="lovable-shadow"
+                className="btn-walkin lovable-shadow"
               >
                 Create Booking
               </Button>

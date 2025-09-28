@@ -3,7 +3,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Lovable nail salon design system with pink theme */
+/* Dynamic theme system with environment variable support */
 
 @layer base {
   :root {
@@ -16,11 +16,11 @@
     --popover: 0 0% 100%;
     --popover-foreground: 222.2 84% 4.9%;
 
-    /* Pink primary theme */
+    /* Primary theme - can be overridden by VITE_PRIMARY_COLOR */
     --primary: 340 82% 52%;
     --primary-foreground: 210 40% 98%;
 
-    /* Light rose secondary */
+    /* Secondary theme - can be overridden by VITE_SECONDARY_COLOR */
     --secondary: 350 100% 88%;
     --secondary-foreground: 222.2 47.4% 11.2%;
 
@@ -47,6 +47,71 @@
     --sidebar-accent-foreground: 240 5.9% 10%;
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 340 82% 52%;
+
+    /* Header colors - can be overridden by VITE_HEADER_* */
+    --header-bg: 0 0% 100%;
+    --header-text: 222.2 84% 4.9%;
+
+    /* Background gradient - can be overridden by VITE_BACKGROUND_* */
+    --background-gradient-from: 350 100% 97%;
+    --background-gradient-to: 340 100% 97%;
+
+    /* Status badge colors - can be overridden by VITE_STATUS_* */
+    --status-confirmed-bg: 221.2 83.2% 53.3%;
+    --status-confirmed-text: 210 40% 98%;
+    --status-confirmed-border: 221.2 83.2% 53.3%;
+
+    --status-arrived-bg: 142.1 76.2% 36.3%;
+    --status-arrived-text: 210 40% 98%;
+    --status-arrived-border: 142.1 76.2% 36.3%;
+
+    --status-done-bg: 210 40% 96.1%;
+    --status-done-text: 215.4 16.3% 46.9%;
+    --status-done-border: 214.3 31.8% 91.4%;
+
+    --status-cancelled-bg: 0 84.2% 60.2%;
+    --status-cancelled-text: 210 40% 98%;
+    --status-cancelled-border: 0 84.2% 60.2%;
+
+    /* Button colors - can be overridden by VITE_*_BUTTON_* */
+    --save-button-bg: 142.1 76.2% 36.3%;
+    --save-button-hover: 142.1 76.2% 30%;
+    
+    --cancel-button-bg: 0 84.2% 60.2%;
+    --cancel-button-hover: 0 84.2% 50%;
+    
+    --done-button-bg: 215.4 16.3% 46.9%;
+    --done-button-hover: 215.4 16.3% 40%;
+
+    /* App metadata - can be overridden by VITE_APP_* */
+    --app-name: "💅 Nail Studio";
+    --app-logo: "💅";
+
+    /* Feature flags - can be overridden by VITE_SHOW_* */
+    --show-services-menu: "true";
+    --show-export-menu: "true";
+
+    /* Walk-in button colors - can be overridden by VITE_WALKIN_BUTTON_* */
+    --walkin-button-bg: 142.1 76.2% 36.3%;
+    --walkin-button-hover: 142.1 76.2% 30%;
+    --walkin-button-text: 0 0% 100%;
+
+    /* Walk-in button visibility flags - can be overridden by VITE_SHOW_WALKIN_BUTTON_* */
+    --show-walkin-button-today: "true";
+    --show-walkin-button-day: "true";
+    --show-walkin-button-calendar: "true";
+
+    /* Walk-in button text customization - can be overridden by VITE_WALKIN_BUTTON_TEXT_* */
+    --walkin-button-text-today: "Walk-in";
+    --walkin-button-text-day: "Add Booking";
+    --walkin-button-text-empty: "Add Walk-in";
+
+    /* Navigation button colors - can be overridden by VITE_NAV_BUTTON_* */
+    --nav-button-active-bg: 340 82% 52%;
+    --nav-button-active-text: 0 0% 100%;
+    --nav-button-active-border: 340 82% 52%;
+    --nav-button-active-hover: 340 82% 40%;
+    --nav-button-inactive-hover: 0 0% 100%;
   }
 
   .dark {
@@ -93,19 +158,96 @@
     transition: all 150ms ease-in-out;
   }
   
+  /* Dynamic status badge classes using CSS variables */
   .status-confirmed {
-    @apply bg-blue-100 text-blue-800 border-blue-200;
+    background-color: hsl(var(--status-confirmed-bg));
+    color: hsl(var(--status-confirmed-text));
+    border: 1px solid hsl(var(--status-confirmed-border));
   }
   
   .status-arrived {
-    @apply bg-green-100 text-green-800 border-green-200;
+    background-color: hsl(var(--status-arrived-bg));
+    color: hsl(var(--status-arrived-text));
+    border: 1px solid hsl(var(--status-arrived-border));
   }
   
   .status-done {
-    @apply bg-gray-100 text-gray-800 border-gray-200;
+    background-color: hsl(var(--status-done-bg));
+    color: hsl(var(--status-done-text));
+    border: 1px solid hsl(var(--status-done-border));
   }
   
   .status-cancelled {
-    @apply bg-red-100 text-red-800 border-red-200;
+    background-color: hsl(var(--status-cancelled-bg));
+    color: hsl(var(--status-cancelled-text));
+    border: 1px solid hsl(var(--status-cancelled-border));
+  }
+
+  /* Dynamic button classes using CSS variables */
+  .btn-save {
+    background-color: hsl(var(--save-button-bg));
+    color: white;
+  }
+  
+  .btn-save:hover {
+    background-color: hsl(var(--save-button-hover));
+  }
+  
+  .btn-cancel {
+    background-color: hsl(var(--cancel-button-bg));
+    color: white;
+  }
+  
+  .btn-cancel:hover {
+    background-color: hsl(var(--cancel-button-hover));
+  }
+  
+  .btn-done {
+    background-color: hsl(var(--done-button-bg));
+    color: white;
+  }
+  
+  .btn-done:hover {
+    background-color: hsl(var(--done-button-hover));
+  }
+
+  /* Dynamic Walk-in button classes using CSS variables */
+  .btn-walkin {
+    background-color: hsl(var(--walkin-button-bg)) !important;
+    color: hsl(var(--walkin-button-text)) !important;
+  }
+  
+  .btn-walkin:hover {
+    background-color: hsl(var(--walkin-button-hover)) !important;
+  }
+
+  /* Dynamic background gradient */
+  .bg-gradient-dynamic {
+    background: linear-gradient(to bottom right, 
+      hsl(var(--background-gradient-from)), 
+      hsl(var(--background-gradient-to))
+    );
+  }
+
+  /* Dynamic navigation button classes using CSS variables */
+  .nav-btn-active {
+    background-color: hsl(var(--nav-button-active-bg)) !important;
+    color: hsl(var(--nav-button-active-text)) !important;
+    border: 1px solid hsl(var(--nav-button-active-border)) !important;
+  }
+  
+  .nav-btn-active:hover {
+    background-color: hsl(var(--nav-button-active-hover)) !important;
+  }
+  
+  .nav-btn-inactive {
+    background-color: transparent !important;
+    color: hsl(var(--nav-button-active-text)) !important;
+    border: 1px solid transparent !important;
+  }
+  
+  .nav-btn-inactive:hover {
+    background-color: hsl(var(--nav-button-inactive-hover)) !important;
+    color: hsl(var(--nav-button-active-text)) !important;
   }
 }

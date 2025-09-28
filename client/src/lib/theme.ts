@@ -206,6 +206,31 @@ export function initializeTheme(): void {
     }
   });
   
+  // Walk-in button colors
+  if (env.VITE_WALKIN_BUTTON_BG) {
+    const normalizedColor = normalizeColor(env.VITE_WALKIN_BUTTON_BG);
+    if (normalizedColor) {
+      root.style.setProperty('--walkin-button-bg', normalizedColor);
+      console.log('Set --walkin-button-bg to:', normalizedColor);
+    }
+  }
+  
+  if (env.VITE_WALKIN_BUTTON_HOVER) {
+    const normalizedColor = normalizeColor(env.VITE_WALKIN_BUTTON_HOVER);
+    if (normalizedColor) {
+      root.style.setProperty('--walkin-button-hover', normalizedColor);
+      console.log('Set --walkin-button-hover to:', normalizedColor);
+    }
+  }
+
+  if (env.VITE_WALKIN_BUTTON_TEXT) {
+    const normalizedColor = normalizeColor(env.VITE_WALKIN_BUTTON_TEXT);
+    if (normalizedColor) {
+      root.style.setProperty('--walkin-button-text', normalizedColor);
+      console.log('Set --walkin-button-text to:', normalizedColor);
+    }
+  }
+  
   // Feature flags
   if (env.VITE_SHOW_SERVICES_MENU !== undefined) {
     root.style.setProperty('--show-services-menu', env.VITE_SHOW_SERVICES_MENU);
@@ -213,6 +238,73 @@ export function initializeTheme(): void {
   
   if (env.VITE_SHOW_EXPORT_MENU !== undefined) {
     root.style.setProperty('--show-export-menu', env.VITE_SHOW_EXPORT_MENU);
+  }
+
+  // Walk-in button visibility flags
+  if (env.VITE_SHOW_WALKIN_BUTTON_TODAY !== undefined) {
+    root.style.setProperty('--show-walkin-button-today', env.VITE_SHOW_WALKIN_BUTTON_TODAY);
+  }
+
+  if (env.VITE_SHOW_WALKIN_BUTTON_DAY !== undefined) {
+    root.style.setProperty('--show-walkin-button-day', env.VITE_SHOW_WALKIN_BUTTON_DAY);
+  }
+
+  if (env.VITE_SHOW_WALKIN_BUTTON_CALENDAR !== undefined) {
+    root.style.setProperty('--show-walkin-button-calendar', env.VITE_SHOW_WALKIN_BUTTON_CALENDAR);
+  }
+
+  // Walk-in button text customization
+  if (env.VITE_WALKIN_BUTTON_TEXT_TODAY) {
+    root.style.setProperty('--walkin-button-text-today', `"${env.VITE_WALKIN_BUTTON_TEXT_TODAY}"`);
+  }
+
+  if (env.VITE_WALKIN_BUTTON_TEXT_DAY) {
+    root.style.setProperty('--walkin-button-text-day', `"${env.VITE_WALKIN_BUTTON_TEXT_DAY}"`);
+  }
+
+  if (env.VITE_WALKIN_BUTTON_TEXT_EMPTY) {
+    root.style.setProperty('--walkin-button-text-empty', `"${env.VITE_WALKIN_BUTTON_TEXT_EMPTY}"`);
+  }
+
+  // Navigation button colors
+  if (env.VITE_NAV_BUTTON_ACTIVE_BG) {
+    const normalizedColor = normalizeColor(env.VITE_NAV_BUTTON_ACTIVE_BG);
+    if (normalizedColor) {
+      root.style.setProperty('--nav-button-active-bg', normalizedColor);
+      console.log('Set --nav-button-active-bg to:', normalizedColor);
+    }
+  }
+
+  if (env.VITE_NAV_BUTTON_ACTIVE_TEXT) {
+    const normalizedColor = normalizeColor(env.VITE_NAV_BUTTON_ACTIVE_TEXT);
+    if (normalizedColor) {
+      root.style.setProperty('--nav-button-active-text', normalizedColor);
+      console.log('Set --nav-button-active-text to:', normalizedColor);
+    }
+  }
+
+  if (env.VITE_NAV_BUTTON_ACTIVE_BORDER) {
+    const normalizedColor = normalizeColor(env.VITE_NAV_BUTTON_ACTIVE_BORDER);
+    if (normalizedColor) {
+      root.style.setProperty('--nav-button-active-border', normalizedColor);
+      console.log('Set --nav-button-active-border to:', normalizedColor);
+    }
+  }
+
+  if (env.VITE_NAV_BUTTON_ACTIVE_HOVER) {
+    const normalizedColor = normalizeColor(env.VITE_NAV_BUTTON_ACTIVE_HOVER);
+    if (normalizedColor) {
+      root.style.setProperty('--nav-button-active-hover', normalizedColor);
+      console.log('Set --nav-button-active-hover to:', normalizedColor);
+    }
+  }
+
+  if (env.VITE_NAV_BUTTON_INACTIVE_HOVER) {
+    const normalizedColor = normalizeColor(env.VITE_NAV_BUTTON_INACTIVE_HOVER);
+    if (normalizedColor) {
+      root.style.setProperty('--nav-button-inactive-hover', normalizedColor);
+      console.log('Set --nav-button-inactive-hover to:', normalizedColor);
+    }
   }
   
   console.log('Theme initialized successfully');

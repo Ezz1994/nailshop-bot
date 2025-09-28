@@ -14,14 +14,31 @@ const Layout = ({ children, userRole = 'staff' }: LayoutProps) => {
 
   const isActive = (path: string) => location.pathname === path;
 
+  // Get environment variables for dynamic content
+  const appName = import.meta.env.VITE_APP_NAME || '💅 Nail Studio';
+  const appLogo = import.meta.env.VITE_APP_LOGO || '💅';
+  const showServicesMenu = import.meta.env.VITE_SHOW_SERVICES_MENU !== 'false';
+  const showExportMenu = import.meta.env.VITE_SHOW_EXPORT_MENU !== 'false';
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-pink-50 to-rose-50">
-      {/* Header */}
-      <header className="bg-white lovable-shadow border-b">
+    <div className="min-h-screen bg-gradient-dynamic">
+      {/* Header with dynamic colors */}
+      <header 
+        className="lovable-shadow border-b"
+        style={{
+          backgroundColor: `hsl(var(--header-bg))`,
+          color: `hsl(var(--header-text))`
+        }}
+      >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center space-x-4">
-              <h1 className="text-2xl font-bold text-primary">💅 Nail Studio</h1>
+              <h1 
+                className="text-2xl font-bold"
+                style={{ color: `hsl(var(--header-text))` }}
+              >
+                {appLogo} {appName}
+              </h1>
             </div>
             
             <nav className="flex items-center space-x-2">
@@ -29,7 +46,7 @@ const Layout = ({ children, userRole = 'staff' }: LayoutProps) => {
                 <Button
                   variant={isActive('/today') ? 'default' : 'ghost'}
                   size="sm"
-                  className="lovable-transition"
+                  className={`lovable-transition ${isActive('/today') ? 'nav-btn-active' : 'nav-btn-inactive'}`}
                 >
                   <Calendar className="w-4 h-4 mr-2" />
                   Today
@@ -40,7 +57,7 @@ const Layout = ({ children, userRole = 'staff' }: LayoutProps) => {
                 <Button
                   variant={isActive('/calendar') ? 'default' : 'ghost'}
                   size="sm"
-                  className="lovable-transition"
+                  className={`lovable-transition ${isActive('/calendar') ? 'nav-btn-active' : 'nav-btn-inactive'}`}
                 >
                   Calendar
                 </Button>
@@ -48,26 +65,30 @@ const Layout = ({ children, userRole = 'staff' }: LayoutProps) => {
               
               {userRole === 'owner' && (
                 <>
-                  <Link to="/services">
-                    <Button
-                      variant={isActive('/services') ? 'default' : 'ghost'}
-                      size="sm"
-                      className="lovable-transition"
-                    >
-                      <Settings className="w-4 h-4 mr-2" />
-                      Services
-                    </Button>
-                  </Link>
+                  {showServicesMenu && (
+                    <Link to="/services">
+                      <Button
+                        variant={isActive('/services') ? 'default' : 'ghost'}
+                        size="sm"
+                        className={`lovable-transition ${isActive('/services') ? 'nav-btn-active' : 'nav-btn-inactive'}`}
+                      >
+                        <Settings className="w-4 h-4 mr-2" />
+                        Services
+                      </Button>
+                    </Link>
+                  )}
                   
-                  <Link to="/export">
-                    <Button
-                      variant={isActive('/export') ? 'default' : 'ghost'}
-                      size="sm"
-                      className="lovable-transition"
-                    >
-                      Export
-                    </Button>
-                  </Link>
+                  {showExportMenu && (
+                    <Link to="/export">
+                      <Button
+                        variant={isActive('/export') ? 'default' : 'ghost'}
+                        size="sm"
+                        className={`lovable-transition ${isActive('/export') ? 'nav-btn-active' : 'nav-btn-inactive'}`}
+                      >
+                        Export
+                      </Button>
+                    </Link>
+                  )}
                 </>
               )}
             </nav>

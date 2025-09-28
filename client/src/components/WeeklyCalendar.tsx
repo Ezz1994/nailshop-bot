@@ -110,14 +110,18 @@ interface WeeklyCalendarProps {
 
 const WeeklyCalendar = ({ selectedDate, onDateChange }: WeeklyCalendarProps) => {
   const [bookings, setBookings] = useState<Booking[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isWalkinModalOpen, setIsWalkinModalOpen] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [viewMode, setViewMode] = useState<"week" | "day">("week");
   const [dayViewDate, setDayViewDate] = useState<Date | null>(null);
-  const [refreshKey, setRefreshKey] = useState(0);
   const { toast } = useToast();
+
+  // Get environment variables for Walk-in button
+  const showWalkinButton = import.meta.env.VITE_SHOW_WALKIN_BUTTON_CALENDAR !== 'false';
+  const walkinButtonText = import.meta.env.VITE_WALKIN_BUTTON_TEXT_DAY || 'Add Booking';
 
   const getWeekStart = (date: Date) => {
     const d = new Date(date);
@@ -335,10 +339,12 @@ const WeeklyCalendar = ({ selectedDate, onDateChange }: WeeklyCalendarProps) => 
           </div>
         </div>
 
-        <Button onClick={() => setIsWalkinModalOpen(true)} className="lovable-shadow lovable-transition hover:scale-105">
-          <CalendarIcon className="w-4 h-4 mr-2" />
-          Add Booking
-        </Button>
+        {showWalkinButton && (
+          <Button onClick={() => setIsWalkinModalOpen(true)} className="btn-walkin lovable-shadow lovable-transition hover:scale-105">
+            <CalendarIcon className="w-4 h-4 mr-2" />
+            {walkinButtonText}
+          </Button>
+        )}
       </div>
 
       {/* Calendar Grid */}

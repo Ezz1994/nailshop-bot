@@ -129,6 +129,11 @@ const DayView = ({
   const [localRefresh, setLocalRefresh] = useState(0);
   const { toast } = useToast();
 
+  // Get environment variables for Walk-in button
+  const showWalkinButton = import.meta.env.VITE_SHOW_WALKIN_BUTTON_DAY !== 'false';
+  const walkinButtonText = import.meta.env.VITE_WALKIN_BUTTON_TEXT_DAY || 'Add Booking';
+  const walkinButtonEmptyText = import.meta.env.VITE_WALKIN_BUTTON_TEXT_EMPTY || 'Add Walk-in';
+
   // Authenticated refetch for the day
   const refetchDay = () => {
     const controller = new AbortController();
@@ -224,13 +229,15 @@ const DayView = ({
             {isToday && <p className="text-sm text-primary font-medium">Today</p>}
           </div>
         </div>
-        <Button
-          onClick={() => setIsWalkinModalOpen(true)}
-          className="lovable-shadow lovable-transition hover:scale-105"
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          Add Booking
-        </Button>
+        {showWalkinButton && (
+          <Button
+            onClick={() => setIsWalkinModalOpen(true)}
+            className="btn-walkin lovable-shadow lovable-transition hover:scale-105"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            {walkinButtonText}
+          </Button>
+        )}
       </div>
 
       {/* Daily Schedule */}
@@ -256,11 +263,18 @@ const DayView = ({
                 <h3 className="text-lg font-semibold text-gray-600 mb-2">
                   No bookings today
                 </h3>
-                <p className="text-gray-500 mb-4">Start by adding a walk-in booking</p>
-                <Button onClick={() => setIsWalkinModalOpen(true)}>
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Walk-in
-                </Button>
+                {showWalkinButton && (
+                  <>
+                    <p className="text-gray-500 mb-4">Start by adding a walk-in booking</p>
+                    <Button 
+                      onClick={() => setIsWalkinModalOpen(true)}
+                      className="btn-walkin"
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      {walkinButtonEmptyText}
+                    </Button>
+                  </>
+                )}
               </CardContent>
             </Card>
           ) : (
