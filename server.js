@@ -12,6 +12,8 @@ require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const cron = require("node-cron");
+const path = require("path");
+const cors = require("cors");
 
 const whatsappRouter = require("./routes/whatsapp");
 const bookingsRouter = require("./routes/bookings");
@@ -29,6 +31,12 @@ const {
 
 const app = express();
 app.enable("trust proxy");
+
+// Enable CORS for all routes
+app.use(cors());
+
+// Serve static files from React build
+app.use(express.static(path.join(__dirname, "client/dist")));
 
 // Twilio sends application/x-www-form-urlencoded
 app.use(bodyParser.urlencoded({ extended: false }));
@@ -68,6 +76,12 @@ cron.schedule("0 9 * * *", () => {
 // Every Sunday at 20:00 → send weekly spotlight
 cron.schedule("0 20 * * 0", () => {
   sendWeeklySpotlightReport().catch(console.error);
+});
+
+// Catch-all handler: send back React's index.html file for SPA routing
+// This MUST be the last route defined
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "client/dist/index.html"));
 });
 
 const PORT = process.env.PORT || 3000;

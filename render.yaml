@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: nailshop-whatsapp-bot
+    runtime: node
+    plan: free  # Change to 'starter' for production
+    buildCommand: npm run build
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Add your environment variables here:
+      # - key: SUPABASE_URL
+      #   sync: false
+      # - key: SUPABASE_ANON_KEY
+      #   sync: false
+      # - key: TWILIO_ACCOUNT_SID
+      #   sync: false
+      # - key: TWILIO_AUTH_TOKEN
+      #   sync: false
+      # - key: TWILIO_SANDBOX_NUMBER
+      #   sync: false
+      # - key: OPENAI_API_KEY
+      #   sync: false

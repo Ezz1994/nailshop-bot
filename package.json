@@ -1,10 +1,13 @@
 {
   "name": "nailsshopwhatsapp",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "build": "npm install"
+    "build": "cd client && npm install && npm run build && cd .. && npm install",
+    "dev": "npm run dev:server",
+    "dev:server": "nodemon server.js",
+    "dev:client": "cd client && npm run dev"
   },
   "keywords": [],
   "author": "",
@@ -19,8 +22,9 @@
     "axios": "^1.9.0",
     "body-parser": "^2.2.0",
     "chrono-node": "^2.8.2",
+    "cors": "^2.8.5",
     "dotenv": "^16.5.0",
-    "express": "^5.1.0",
+    "express": "^4.18.2",
     "luxon": "^3.6.1",
     "ngrok": "^5.0.0-beta.2",
     "node-cron": "^4.2.1",

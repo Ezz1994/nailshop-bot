@@ -4,7 +4,9 @@ import axios, {
 } from "axios";
 import { supabase } from "@/lib/supabase";
 
-const BASE = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, ""); // e.g. http://localhost:8080/api
+// For unified server deployment, use relative URLs (same origin)
+// For development with separate servers, use VITE_API_URL
+const BASE = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
 
 export const http = axios.create({
   baseURL: BASE,
